@@ -154,6 +154,26 @@ known to accept it (`EFFORT_CAPABLE`). It is an allow-list on purpose: omitting
 `SWEEP_MAX_DISCUSSIONS` caps spend per run. Hitting the cap is logged as a
 warning, never silently truncated.
 
+## The registry can point at nobody, so it is validated
+
+`upsertTeam` rejects a lead that is not a `U…` ID, and separately rejects the
+placeholder IDs this project ships in `teams.example.yml` and the `TEAMS_CONFIG`
+comment. That second check exists because it happened: a deploy bootstrapped
+from the example verbatim, everything worked perfectly, and the DM went to
+`U000EXAMPLE1` — `conversations.open` returned `user_not_found`, a match was
+raised, nobody was told, and the only evidence was one line in the ingestion
+workload's log. The ID is well-formed, so a shape check cannot catch it.
+
+A real ID cannot be verified from the agent container (it holds no Slack token),
+but our own placeholders can be, and they are what actually gets pasted. If you
+add a new example ID anywhere, use the `U000EXAMPLE*` / `C000EXAMPLE*` form so
+the guard covers it.
+
+Delivery failures are also recorded on the `score_discussion` span
+(`radar.delivery_failures`, with the Slack error code) and set the span to
+ERROR, so a registry pointing at a non-existent lead shows up in traces rather
+than only in logs.
+
 ## Configuration lives in code, not in inputs
 
 `astropods.yml` asks the deployer for nine things, all credentials or workspace

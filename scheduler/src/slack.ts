@@ -37,12 +37,31 @@ export async function openDM(userId: string): Promise<string | null> {
     dmChannelCache.set(userId, id);
     return id;
   } catch (err) {
-    console.error(
-      `[slack-radar] conversations.open failed for ${userId}:`,
-      (err as { data?: { error?: string } })?.data?.error ?? err,
-    );
+    lastSlackError = (err as { data?: { error?: string } })?.data?.error ?? "unknown";
+    // user_not_found almost always means a placeholder or mistyped lead ID in
+    // the registry, so say so rather than leaving someone to guess at a raw
+    // Slack error code in an ingestion log.
+    const hint =
+      lastSlackError === "user_not_found"
+        ? " — that lead ID does not exist in this workspace; fix it with registerTeam"
+        : "";
+    console.error(`[slack-radar] cannot DM ${userId}: ${lastSlackError}${hint}`);
     return null;
   }
+}
+
+/**
+ * The Slack error code from the most recent failed call.
+ *
+ * Delivery happens two layers below the span that should record the failure,
+ * and threading a result type through every call site is more churn than this
+ * is worth. Read it immediately after a call that returned null.
+ */
+let lastSlackError: string | null = null;
+export function takeLastSlackError(): string | null {
+  const e = lastSlackError;
+  lastSlackError = null;
+  return e;
 }
 
 export async function postDM(channelId: string, text: string): Promise<string | null> {
@@ -55,10 +74,8 @@ export async function postDM(channelId: string, text: string): Promise<string | 
     });
     return (res.ts as string) ?? null;
   } catch (err) {
-    console.error(
-      `[slack-radar] chat.postMessage failed for ${channelId}:`,
-      (err as { data?: { error?: string } })?.data?.error ?? err,
-    );
+    lastSlackError = (err as { data?: { error?: string } })?.data?.error ?? "unknown";
+    console.error(`[slack-radar] chat.postMessage failed for ${channelId}: ${lastSlackError}`);
     return null;
   }
 }

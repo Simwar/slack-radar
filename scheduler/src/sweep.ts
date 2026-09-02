@@ -14,6 +14,7 @@ import { collectFeedback } from "./feedback";
 import { judgeDiscussion } from "./judge";
 import { describeJudge } from "./model";
 import { deliverRealtime, markItemNotified, withinWorkingHours } from "./notify";
+import { SpanStatusCode } from "@opentelemetry/api";
 import { getTracer } from "./observability";
 import { shortlistTeams } from "./prefilter";
 import type { DiscussionRow, TeamRow } from "./types";
@@ -173,11 +174,24 @@ async function processDiscussion(
           };
 
           let delivered = false;
+          const failures: string[] = [];
           for (const leadId of team.lead_slack_ids) {
             const prefs = leadPrefs.get(leadId);
             if (prefs && !prefs.realtime) continue;
             if (prefs?.pausedUntil && prefs.pausedUntil > now) continue;
-            if (await deliverRealtime(item, leadId)) delivered = true;
+            const res = await deliverRealtime(item, leadId);
+            if (res.ok) delivered = true;
+            else failures.push(`${leadId}:${res.error}`);
+          }
+          // A registry pointing at a lead who does not exist produces a
+          // perfect run that notifies nobody. Recorded on the span so it shows
+          // up in traces instead of only in the ingestion workload's logs.
+          if (failures.length) {
+            span.setAttribute("radar.delivery_failures", failures);
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: `could not DM: ${failures.join(", ")}`,
+            });
           }
           // Only mark it delivered if it actually reached someone. Otherwise it
           // stays pending and the digest picks it up.

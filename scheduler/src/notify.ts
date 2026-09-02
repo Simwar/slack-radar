@@ -1,7 +1,7 @@
 import { toZonedTime } from "date-fns-tz";
 import { CONFIG, isDemoMode } from "./config";
 import { markNotified, recordNotification } from "./db";
-import { openDM, permalink, postDM } from "./slack";
+import { openDM, permalink, postDM, takeLastSlackError } from "./slack";
 
 function parseHHMM(value: string): number {
   const [h, m] = value.split(":").map(Number);
@@ -77,13 +77,13 @@ export function feedbackFooter(): string {
 export async function deliverRealtime(
   item: DeliverableItem,
   leadSlackId: string,
-): Promise<boolean> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const dm = await openDM(leadSlackId);
-  if (!dm) return false;
+  if (!dm) return { ok: false, error: takeLastSlackError() ?? "dm_open_failed" };
 
   const body = `:rotating_light: *Heads up, ${item.teamName}*\n\n${await renderItem(item)}${feedbackFooter()}`;
   const ts = await postDM(dm, body);
-  if (!ts) return false;
+  if (!ts) return { ok: false, error: takeLastSlackError() ?? "post_failed" };
 
   await recordNotification({
     matchId: item.matchId,
@@ -92,7 +92,7 @@ export async function deliverRealtime(
     dmTs: ts,
     mode: "realtime",
   });
-  return true;
+  return { ok: true };
 }
 
 export async function markItemNotified(matchId: string): Promise<void> {

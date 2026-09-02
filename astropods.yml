@@ -141,21 +141,22 @@ inputs:
   #     - key: platform
   #       name: Platform
   #       description: Owns the API gateway, auth/SSO, and rate limiting.
-  #       leads: [U012ABCDEF]           # Slack user IDs, not @handles
+  #       leads: [U000EXAMPLE1]           # REPLACE THIS — Slack user IDs, not @handles.
+  #                                       # These placeholders are rejected on purpose.
   #       keywords: [gateway, rate limit, sso, "429"]
   #       topics:
   #         - API gateway routing and rate limits
   #         - authentication, SSO, and token handling
-  #       home_channels: [C012ABCDEF]   # team already reads these; never flagged for them
+  #       home_channels: [C000EXAMPLE1]   # team already reads these; never flagged for them
   #       min_confidence: 0.6           # optional, 0-1, default 0.6
   #       realtime: true                # optional, false = digest only, never an instant DM
   #
   #     - key: agent
   #       name: Agent
   #       description: Owns the AI Agent product — runtime, tool calling, and model routing.
-  #       leads: [U034GHIJKL]
+  #       leads: [U000EXAMPLE2]
   #       keywords: [mcp, tool call, agent runtime, prompt injection]
-  #       home_channels: [C034GHIJKL]
+  #       home_channels: [C000EXAMPLE2]
   #
   # Note this team does NOT use "agent" as a keyword. Pick terms distinctive in
   # YOUR Slack: in a company building agents, "agent" matches almost every

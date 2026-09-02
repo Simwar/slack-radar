@@ -48,6 +48,21 @@ const SLACK_USER_RE = /^U[A-Z0-9]+$/i;
 const SLACK_CHANNEL_RE = /^[CGD][A-Z0-9]+$/i;
 
 /**
+ * IDs from this project's own teams.example.yml.
+ *
+ * Rejecting these is not paranoia, it is the observed failure: the example file
+ * exists so people can paste it into TEAMS_CONFIG, and pasting it verbatim
+ * bootstraps a team whose lead is fictional. Everything then works perfectly
+ * right up to `conversations.open`, which returns user_not_found — a match is
+ * raised, nothing is delivered, and the only trace is one log line in the
+ * ingestion workload. The shape is valid, so SLACK_USER_RE cannot catch it.
+ *
+ * A real ID cannot be verified from this container (the agent holds no Slack
+ * token), but the placeholders can be, and they are what actually gets used.
+ */
+const PLACEHOLDER_ID_RE = /^(U|C|G|D)0*(EXAMPLE|TEST|XXX|1234|0{4,})/i;
+
+/**
  * Create or update a team. The single write path for the registry, used by the
  * TEAMS_CONFIG bootstrap and by the agent's registerTeam tool, so a team made
  * over Slack is indistinguishable from a seeded one.
@@ -64,11 +79,27 @@ export async function upsertTeam(t: SeedTeam): Promise<void> {
   // and nobody is ever told.
   const leads = (t.leads ?? []).map((l) => l.trim()).filter(Boolean);
   const badLeads = leads.filter((l) => !SLACK_USER_RE.test(l));
-  if (badLeads.length) throw new Error(`not Slack user IDs: ${badLeads.join(', ')}`);
+  if (badLeads.length) {
+    throw new Error(
+      `not Slack user IDs: ${badLeads.join(', ')}. A lead must be an ID like U012ABCDEF, not a handle — find it via the member's Slack profile, "Copy member ID".`,
+    );
+  }
+  const placeholderLeads = leads.filter((l) => PLACEHOLDER_ID_RE.test(l));
+  if (placeholderLeads.length) {
+    throw new Error(
+      `${placeholderLeads.join(', ')} looks like a placeholder from teams.example.yml, not a real user. Slack will reject it with user_not_found and no notification will ever arrive. Replace it with a real Slack user ID ("Copy member ID" on the member's profile).`,
+    );
+  }
 
   const channels = (t.home_channels ?? []).map((c) => c.trim()).filter(Boolean);
   const badChannels = channels.filter((c) => !SLACK_CHANNEL_RE.test(c));
   if (badChannels.length) throw new Error(`not Slack channel IDs: ${badChannels.join(', ')}`);
+  const placeholderChannels = channels.filter((c) => PLACEHOLDER_ID_RE.test(c));
+  if (placeholderChannels.length) {
+    throw new Error(
+      `${placeholderChannels.join(', ')} looks like a placeholder from teams.example.yml. Home channels silently suppress matches, so a fake one just means the team is never quietened where it should be.`,
+    );
+  }
 
   await withDbRetry(
     () =>
