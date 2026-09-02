@@ -1,0 +1,65 @@
+# EXAMPLE ONLY — this file is not read at runtime and is not shipped in the image.
+#
+# It documents the shape of the TEAMS_CONFIG deploy input. Paste a document like
+# this into TEAMS_CONFIG (YAML or JSON) to bootstrap the registry on first boot,
+# or leave that input blank and set everything up by DMing the agent
+# ("set up a team for platform, I'm the lead, we own the API gateway").
+#
+# TEAMS_CONFIG is BOOTSTRAP ONLY: it is applied when the registry is empty and
+# ignored afterwards, because from then on the registry lives in Postgres and
+# leads change it over Slack. Re-applying it every boot would make a redeploy
+# silently revert their tuning.
+#
+# For local dev you can point TEAMS_FILE at this file instead of pasting it.
+#
+# `leads` are Slack user IDs (U…), not handles. Find one via the member's
+# profile → "Copy member ID".
+#
+# `home_channels` are channels the team already lives in. A discussion there is
+# not news to them, so it is never matched to this team. This is the single most
+# effective noise control in the system — fill it in.
+
+teams:
+  - key: platform
+    name: Platform
+    description: >-
+      Owns the API gateway, auth/SSO, rate limiting, and the shared service
+      runtime. Cares about anything that changes request-path behaviour.
+    leads:
+      - U000EXAMPLE1   # Slack user ID, not a handle
+    topics:
+      - API gateway routing and rate limits
+      - authentication, SSO, and token handling
+      - service-to-service latency and timeouts
+    keywords: [gateway, envoy, rate limit, sso, saml, oauth, jwt, "429", timeout]   # quote anything numeric
+    home_channels:
+      - C000EXAMPLE1
+    realtime: true
+    min_confidence: 0.6
+
+  - key: agent
+    name: Agent
+    description: >-
+      Owns the AI Agent product: the agent runtime, tool calling and MCP
+      integrations, and how the agent picks and calls models.
+    leads:
+      - U000EXAMPLE2
+    topics:
+      - agent runtime reliability and error handling
+      - tool calling and MCP integrations
+      - model choice, latency, and token cost
+    # Two rules for keywords, both learned the hard way:
+    #
+    # 1. Do not use your own product's name ("agent" here). In a company that
+    #    builds agents it appears in nearly every message, so every discussion
+    #    would be sent to the model and then rejected — pure cost, no signal.
+    #    The team NAME is matched separately at half weight for this reason.
+    #
+    # 2. Single words match whole words exactly: "hallucination" does NOT match
+    #    "hallucinating". Multi-word entries match as substrings, so short
+    #    phrases are usually the safer choice.
+    keywords: [mcp, tool call, agent runtime, token limit, prompt injection]
+    home_channels:
+      - C000EXAMPLE2
+    realtime: false      # this team only wants digests, never an instant DM
+    min_confidence: 0.7

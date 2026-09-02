@@ -1,0 +1,266 @@
+# yaml-language-server: $schema=https://astropods.ai/schema/package.json
+spec: blueprint/v1
+name: slack-radar
+
+agent:
+  build:
+    context: .
+    dockerfile: agent/Dockerfile
+  interfaces:
+    frontend: false
+    messaging: true
+  # /health (agent/health.ts) returns 200 whenever the process/event loop is
+  # responsive. One block drives BOTH liveness and readiness (the platform
+  # generates identical probes), so the check must NOT gate on Slack/Postgres:
+  # 503-ing on a dependency blip would restart the pod every check.
+  healthcheck:
+    path: /health
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
+dev:
+  interfaces:
+    messaging:
+      adapters: [slack]
+      slack:
+        # EVERY channel the radar watches must be listed here AND have the bot
+        # invited. Without observe_channel_ids the sidecar drops non-mention
+        # messages ("Ignoring top-level message") and the radar sees nothing.
+        # scripts/deploy.sh builds this list for the deployed agent from
+        # WATCHED_CHANNEL_IDS; this block is local dev only.
+        # LOCAL DEV ONLY — replace with your own channel IDs.
+        #
+        # Deployed, this is NOT set from the repo. The deploy page's Slack
+        # section has an "Observe Channel IDs" field; that is the real control,
+        # and it is per-deployment config rather than code. Leave "Allowed
+        # Channel IDs" BLANK there — a non-empty allowlist makes the sidecar
+        # post "This app has not been enabled for this channel or user" into
+        # every channel it rejects.
+        observe_channel_ids:
+          - C00000000001
+          - C00000000002
+  schedules:
+    # This cron is the REAL latency floor: nothing can be judged sooner than the
+    # next tick, whatever SWEEP_QUIET_MINUTES says. At */15 a lone message is
+    # judged ~15min after posting and a busy incident thread the same, because
+    # the burst rule fires it immediately. Move to */5 if 15min is too slow for
+    # incidents; that is 3x the pod churn for a ~10min floor.
+    discussion_sweep: "* * * * *"
+    # Twice a day, start of morning and after lunch. Both are deliberately
+    # inside the working window.
+    lead_digest: "0 9,14 * * 1-5"
+
+# No `models:` provider entry on purpose.
+#
+# A `models.anthropic` provider injects ANTHROPIC_API_KEY into the AGENT
+# container only — it does not reach ingestion containers, which would force the
+# sweep to carry a second copy of the same secret. Declaring the key as a
+# top-level input instead injects it into EVERY container, so "the same
+# Anthropic key throughout" is literally one value. Baseten works the same way,
+# which keeps the two paths symmetric.
+
+knowledge:
+  slackradardb:
+    provider: postgres
+
+inputs:
+  # ── Path selection ─────────────────────────────────────────────────────────
+  # Set BASETEN_API_KEY and everything (agent + judge) runs on Baseten. Leave it
+  # blank and everything runs on Anthropic. There is no per-container override
+  # and no mixed mode: agent/model.ts and scheduler/src/model.ts apply the same
+  # rule, so the two containers cannot end up on different providers.
+  ANTHROPIC_API_KEY:
+    name: ANTHROPIC_API_KEY
+    datatype: string
+    secret: true
+    optional: true
+    description: "Anthropic API key, used by BOTH the agent and the sweep judge. Required unless BASETEN_API_KEY is set."
+  ANTHROPIC_MODEL:
+    name: ANTHROPIC_MODEL
+    datatype: string
+    default: "claude-haiku-4-5"
+    description: >-
+      Model for the Anthropic path, used for both chatting and triage. Haiku is
+      the default because triage is high volume. Raise it to claude-sonnet-5 or
+      claude-opus-5 if the radar misses things worth knowing.
+  BASETEN_API_KEY:
+    name: BASETEN_API_KEY
+    datatype: string
+    secret: true
+    optional: true
+    description: "Set this to switch the WHOLE agent to Baseten. Leave blank to use Anthropic. Baseten wins when both are set."
+  BASETEN_BASE_URL:
+    name: BASETEN_BASE_URL
+    datatype: string
+    optional: true
+    default: "https://inference.baseten.co/v1"
+    description: "Baseten inference base URL. Editable here so the endpoint can move without a code deploy."
+  BASETEN_MODEL:
+    name: BASETEN_MODEL
+    datatype: string
+    optional: true
+    display-as: select
+    # Baseten Model APIs catalogue, verified against
+    # docs.baseten.co/development/model-apis/overview.
+    #
+    # This is a SNAPSHOT and it will go stale — an earlier version of this list
+    # was copied from Mastra's bundled provider registry and five of its seven
+    # entries had already been retired, so picking one from the dropdown would
+    # have failed at the first model call. `/v1/models` is authoritative:
+    #   curl https://inference.baseten.co/v1/models -H "Authorization: Bearer $BASETEN_API_KEY"
+    # Re-check before adding an entry here. `display-as: select` means a wrong
+    # value here is a dead option a deployer can pick, not a typo they can fix.
+    options:
+      - zai-org/GLM-4.7
+      - zai-org/GLM-5.3
+      - zai-org/GLM-5.3-Flash
+      - zai-org/GLM-5.2
+      - deepseek-ai/DeepSeek-V4-Pro
+      - deepseek-ai/DeepSeek-V4-Flash-0731
+      - moonshotai/Kimi-K3
+      - moonshotai/Kimi-K2.6
+      - thinkingmachines/inkling
+      - thinkingmachines/inkling-small
+      - nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B
+      - openai/gpt-oss-120b
+    default: "zai-org/GLM-4.7"
+    description: >-
+      Model for the Baseten path. Every model listed supports tool calling, which
+      this agent requires. For lower cost pick a Flash/Fast tier or
+      openai/gpt-oss-120b. Run /v1/models for current pricing.
+  SLACK_WORKSPACE_DOMAIN:
+    name: SLACK_WORKSPACE_DOMAIN
+    datatype: string
+    description: "Your Slack workspace subdomain (the 'acme' in acme.slack.com). Used to build thread deep links. Links degrade to a slack:// URI without it."
+  # ── Team registry ─────────────────────────────────────────────────────────
+  #
+  # Example TEAMS_CONFIG value — paste something like this into the input:
+  #
+  #   teams:
+  #     - key: platform
+  #       name: Platform
+  #       description: Owns the API gateway, auth/SSO, and rate limiting.
+  #       leads: [U012ABCDEF]           # Slack user IDs, not @handles
+  #       keywords: [gateway, rate limit, sso, "429"]
+  #       topics:
+  #         - API gateway routing and rate limits
+  #         - authentication, SSO, and token handling
+  #       home_channels: [C012ABCDEF]   # team already reads these; never flagged for them
+  #       min_confidence: 0.6           # optional, 0-1, default 0.6
+  #       realtime: true                # optional, false = digest only, never an instant DM
+  #
+  #     - key: agent
+  #       name: Agent
+  #       description: Owns the AI Agent product — runtime, tool calling, and model routing.
+  #       leads: [U034GHIJKL]
+  #       keywords: [mcp, tool call, agent runtime, prompt injection]
+  #       home_channels: [C034GHIJKL]
+  #
+  # Note this team does NOT use "agent" as a keyword. Pick terms distinctive in
+  # YOUR Slack: in a company building agents, "agent" matches almost every
+  # message, so every discussion would reach the model and cost money to reject.
+  # Single words match whole words exactly ("hallucination" will not match
+  # "hallucinating"), so short phrases are usually safer.
+  #
+  # JSON works too. Quote anything numeric ("429") or YAML reads it as a number.
+  # Only `key` is required; everything else can be added later over Slack.
+  #
+  # Why it is read only once: after the first deploy the registry lives in
+  # Postgres and leads change it by DMing the agent. Re-applying this input on
+  # every boot would quietly undo their tuning on the next redeploy.
+  TEAMS_CONFIG:
+    name: TEAMS_CONFIG
+    datatype: string
+    optional: true
+    display-as: long-text
+    description: >-
+      Optional. Your teams, and who to notify about what. Leave blank to set this
+      up by DMing the agent instead. Only read on your first deploy; after that,
+      teams are edited in Slack. Format: see teams.example.yml.
+  # Demo mode changes timing only — never the prefilter, the judge prompt or the
+  # confidence thresholds, so what an audience watches make decisions is the same
+  # logic that runs in production. It also cannot beat the sweep cron, which is
+  # the real latency floor: pair it with a once-a-minute cron. The sweep logs a
+  # loud warning on every run while it is enabled.
+  DEMO_MODE:
+    name: DEMO_MODE
+    datatype: string
+    optional: true
+    default: ""
+    description: >-
+      Set to 'true' only for a live demo: notifications arrive in about a minute
+      instead of 15, and the weekday 09:00-18:00 limit on instant DMs is lifted.
+      Turn it off afterwards. See docs/DEMO.md.
+  RADAR_TIMEZONE:
+    name: RADAR_TIMEZONE
+    datatype: string
+    default: "America/New_York"
+    description: >-
+      Your team's timezone. Instant DMs are only sent on weekdays between 09:00
+      and 18:00 local; anything outside that waits for the next digest.
+
+ingestion:
+  # ---------------------------------------------------------------------------
+  # The scoring loop: pick ripe discussions, shortlist teams lexically, judge
+  # with one model call, raise matches, and DM anything urgent.
+  # ---------------------------------------------------------------------------
+  discussion_sweep:
+    container:
+      build:
+        context: .
+        dockerfile: scheduler/Dockerfile
+    trigger:
+      type: schedule
+    inputs:
+      - name: RADAR_SLACK_BOT_TOKEN
+        datatype: string
+        secret: true
+        description: >-
+          Slack bot token (xoxb-...) so this job can DM leads and read their
+          reactions. Same value as the agent's Slack token — scheduled jobs do
+          not inherit it, so it has to be given again here.
+      #
+      # Everything else the sweep does is tuned in scheduler/src/config.ts, NOT
+      # here. Ripeness thresholds, spend ceilings, prefilter strictness, the
+      # feedback weighting, emoji names and retention are all hardcoded defaults
+      # with a documented rationale, and README.md has the table.
+      #
+      # They were inputs originally, and that was wrong: it made `ast project
+      # configure` look like twenty decisions when nobody has the information to
+      # improve on the defaults until the radar has run for a week. Credentials
+      # and locale are the only things a deployer actually knows.
+      #
+      # Every constant still reads its env var first, so re-exposing one is a
+      # two-line change with no code deploy. Un-comment what you need:
+      #
+      # - name: JUDGE_MODEL          # run a different model for the judge than for chat
+      #   datatype: string
+      #   optional: true
+      #   description: "Overrides the judge's model on whichever backend is active. Inherits ANTHROPIC_MODEL / BASETEN_MODEL when blank."
+      # - name: SWEEP_QUIET_MINUTES  # default 10 — how long a thread must be silent before it is judged
+      # - name: SWEEP_BURST_MESSAGES # default 8  — ...or this many messages while still live
+      # - name: SWEEP_MAX_DISCUSSIONS# default 60 — hard cap on judge calls per run
+      # - name: PREFILTER_MIN_SCORE  # default 1  — raise to cut model spend, at the cost of recall
+      # - name: NOISE_PENALTY        # default 0.3 — how hard thumbs-down raises the bar; 0 disables the feedback loop
+      # - name: MESSAGE_RETENTION_DAYS # default 30 — re-expose this one FIRST if a privacy review needs it changeable
+
+  # ---------------------------------------------------------------------------
+  # The default delivery path: everything not urgent enough to interrupt for,
+  # batched per lead.
+  # ---------------------------------------------------------------------------
+  lead_digest:
+    container:
+      build:
+        context: .
+        dockerfile: scheduler/Dockerfile.digest
+    trigger:
+      type: schedule
+    inputs:
+      - name: RADAR_SLACK_BOT_TOKEN
+        datatype: string
+        secret: true
+        description: >-
+          Slack bot token (xoxb-...) so this job can send digest DMs. Same value
+          as the sweep's.
+      # DIGEST_MAX_ITEMS (default 12) lives in scheduler/src/config.ts.

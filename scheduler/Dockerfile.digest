@@ -1,0 +1,18 @@
+# lead_digest — the rollup job. Same image contents as the sweep, different
+# entry point: keeping one source tree means the two jobs can never drift on
+# Slack formatting or the notifications schema.
+# Build stage
+FROM oven/bun:1 AS builder
+WORKDIR /app
+COPY scheduler/package.json scheduler/bun.lock ./
+RUN bun install --frozen-lockfile --production
+COPY scheduler/src ./src
+
+# Runtime stage
+FROM oven/bun:1-slim
+WORKDIR /app
+COPY --from=builder --chown=bun:bun /app/node_modules ./node_modules
+COPY --from=builder --chown=bun:bun /app/src ./src
+COPY --from=builder --chown=bun:bun /app/package.json ./
+USER bun
+CMD ["bun", "run", "src/digest-job.ts"]
