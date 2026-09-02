@@ -91,13 +91,20 @@ export async function upsertTeam(t: SeedTeam): Promise<void> {
     );
   }
 
-  const channels = (t.home_channels ?? []).map((c) => c.trim()).filter(Boolean);
-  const badChannels = channels.filter((c) => !SLACK_CHANNEL_RE.test(c));
+  const allChannels = (t.home_channels ?? []).map((c) => c.trim()).filter(Boolean);
+  const badChannels = allChannels.filter((c) => !SLACK_CHANNEL_RE.test(c));
   if (badChannels.length) throw new Error(`not Slack channel IDs: ${badChannels.join(', ')}`);
-  const placeholderChannels = channels.filter((c) => PLACEHOLDER_ID_RE.test(c));
+
+  // Placeholder home channels are DROPPED, not fatal — unlike a placeholder
+  // lead. The failure modes are not comparable: a fake lead means nobody can
+  // ever be notified, while a fake home channel only means the team is not
+  // quietened somewhere it should be. Rejecting the whole team over the latter
+  // would leave a deployment with no registry at all, which is strictly worse.
+  const placeholderChannels = allChannels.filter((c) => PLACEHOLDER_ID_RE.test(c));
+  const channels = allChannels.filter((c) => !PLACEHOLDER_ID_RE.test(c));
   if (placeholderChannels.length) {
-    throw new Error(
-      `${placeholderChannels.join(', ')} looks like a placeholder from teams.example.yml. Home channels silently suppress matches, so a fake one just means the team is never quietened where it should be.`,
+    console.warn(
+      `[slack-radar] team ${t.key}: ignoring placeholder home_channels ${placeholderChannels.join(', ')} — replace them with real channel IDs or this team will not be quietened in its own channels`,
     );
   }
 

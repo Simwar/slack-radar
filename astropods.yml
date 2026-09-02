@@ -164,7 +164,11 @@ inputs:
   # Single words match whole words exactly ("hallucination" will not match
   # "hallucinating"), so short phrases are usually safer.
   #
-  # JSON works too. Quote anything numeric ("429") or YAML reads it as a number.
+  # JSON is the SAFER choice here, and is accepted: YAML depends on line breaks,
+  # and this value passes through web forms and shell vars that can flatten them
+  # into one line — which still looks right on screen but parses to nothing.
+  #   {"teams":[{"key":"platform","leads":["U…"],"keywords":["gateway"]}]}
+  # In YAML, quote anything numeric ("429") or it is read as a number.
   # Only `key` is required; everything else can be added later over Slack.
   #
   # Why it is read only once: after the first deploy the registry lives in
@@ -178,7 +182,8 @@ inputs:
     description: >-
       Optional. Your teams, and who to notify about what. Leave blank to set this
       up by DMing the agent instead. Only read on your first deploy; after that,
-      teams are edited in Slack. Format: see teams.example.yml.
+      teams are edited in Slack. JSON or YAML; prefer JSON, which survives being
+      flattened to one line. Format: see teams.example.yml.
   # Demo mode changes timing only — never the prefilter, the judge prompt or the
   # confidence thresholds, so what an audience watches make decisions is the same
   # logic that runs in production. It also cannot beat the sweep cron, which is

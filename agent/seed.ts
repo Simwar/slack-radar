@@ -53,6 +53,12 @@ export async function seedTeams(): Promise<void> {
     // A malformed input must not take the agent down: it still needs to serve
     // /health and answer Slack so someone can fix the registry from there.
     console.error('[slack-radar] TEAMS_CONFIG is not valid YAML/JSON, skipping seed:', (err as Error).message);
+    // Overwhelmingly the cause. YAML depends on newlines, and this value passes
+    // through web forms and shell vars that can flatten them; the result looks
+    // fine on screen and parses to nothing. JSON has no such problem.
+    console.error(
+      '[slack-radar] if the value lost its line breaks, use JSON instead — it is accepted here and is not whitespace-sensitive: {"teams":[{"key":"platform","leads":["U…"],"keywords":["gateway"]}]}',
+    );
     return;
   }
 
