@@ -5,3 +5,5 @@ dist/
 .DS_Store
 *.log
 .ast/
+# state dir when running a locally built ast binary
+.ast-dev/
