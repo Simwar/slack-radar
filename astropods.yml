@@ -38,8 +38,7 @@ dev:
         # post "This app has not been enabled for this channel or user" into
         # every channel it rejects.
         observe_channel_ids:
-          - C00000000001
-          - C00000000002
+          - C0BU9P6R5U5
   schedules:
     # This cron is the REAL latency floor: nothing can be judged sooner than the
     # next tick, whatever SWEEP_QUIET_MINUTES says. At */15 a lone message is
@@ -51,7 +50,7 @@ dev:
     # inside the working window.
     lead_digest: "0 9,14 * * 1-5"
 
-# No `models:` provider entry on purpose.
+# No `models:` entry for Anthropic or Baseten, on purpose.
 #
 # A `models.anthropic` provider injects ANTHROPIC_API_KEY into the AGENT
 # container only — it does not reach ingestion containers, which would force the
@@ -59,6 +58,26 @@ dev:
 # top-level input instead injects it into EVERY container, so "the same
 # Anthropic key throughout" is literally one value. Baseten works the same way,
 # which keeps the two paths symmetric.
+#
+# The gateway entry below is the one exception, and it is deliberately NOT a
+# credential path for the agent or the judge — both still resolve through the
+# two top-level keys above. It exists so the platform injects ASTRO_GATEWAY_URL
+# and ASTRO_GATEWAY_API_KEY, which the decision model (jev-1-13-0, for relevance
+# classification) needs.
+#
+# Whether those vars reach the INGESTION containers is the open question, and it
+# is the whole reason this entry is here: the sweep logs `gateway url=… key=…`
+# at the top of every run. If they turn out to be agent-only, this moves to
+# top-level inputs like the other two keys, and this comment goes back to
+# saying no provider entries at all.
+#
+# The `models` list is a deploy-time menu injected as MODEL_DEFAULT. Nothing
+# reads it yet: the decisions API takes its model id in the request body, so the
+# menu exists only because a gateway entry needs one.
+models:
+  default:
+    provider: gateway
+    models: [claude-haiku-4-5]
 
 knowledge:
   slackradardb:
@@ -135,69 +154,55 @@ inputs:
     description: "Your Slack workspace subdomain (the 'acme' in acme.slack.com). Used to build thread deep links. Links degrade to a slack:// URI without it."
   # ── Team registry ─────────────────────────────────────────────────────────
   #
-  # Example TEAMS_CONFIG value — paste something like this into the input:
+  # Fully annotated example: teams.example.yml. That file is NOT shipped in the
+  # image, so the description below carries a working value inline — whoever
+  # fills this in is on the deploy page, not in the repo.
   #
-  #   teams:
-  #     - key: platform
-  #       name: Platform
-  #       description: Owns the API gateway, auth/SSO, and rate limiting.
-  #       leads: [U000EXAMPLE1]           # REPLACE THIS — Slack user IDs, not @handles.
-  #                                       # These placeholders are rejected on purpose.
-  #       keywords: [gateway, rate limit, sso, "429"]
-  #       topics:
-  #         - API gateway routing and rate limits
-  #         - authentication, SSO, and token handling
-  #       home_channels: [C000EXAMPLE1]   # team already reads these; never flagged for them
-  #       min_confidence: 0.6           # optional, 0-1, default 0.6
-  #       realtime: true                # optional, false = digest only, never an instant DM
+  # Fields. Only `key` is required, and ANY KEY NOT ON THIS LIST IS IGNORED
+  # WITHOUT WARNING, which is the most common way a hand-written config does
+  # nothing:
   #
-  #     - key: agent
-  #       name: Agent
-  #       description: Owns the AI Agent product — runtime, tool calling, and model routing.
-  #       leads: [U000EXAMPLE2]
-  #       keywords: [mcp, tool call, agent runtime, prompt injection]
-  #       home_channels: [C000EXAMPLE2]
+  #   key             stable identifier, required
+  #   name            display name; also matched, at half weight
+  #   description     what the team owns, in prose — the judge reads this
+  #   leads           Slack user IDs (U…), NOT @handles
+  #   topics          phrases describing the team's area
+  #   keywords        literal terms to match
+  #   home_channels   channels the team already reads; never flagged for them
+  #   realtime        false = digest only, never an instant DM   (default true)
+  #   min_confidence  0-1 bar a match must clear                 (default 0.6)
   #
-  # Note this team does NOT use "agent" as a keyword. Pick terms distinctive in
-  # YOUR Slack: in a company building agents, "agent" matches almost every
-  # message, so every discussion would reach the model and cost money to reject.
-  # Single words match whole words exactly ("hallucination" will not match
-  # "hallucinating"), so short phrases are usually safer.
+  # Prefer JSON. YAML depends on line breaks, and this value passes through web
+  # forms and shell variables that can flatten it to a single line — which still
+  # looks right on screen and parses to nothing. If you do use YAML, quote
+  # anything numeric ("429") or it is read as a number.
   #
-  # JSON is the SAFER choice here, and is accepted: YAML depends on line breaks,
-  # and this value passes through web forms and shell vars that can flatten them
-  # into one line — which still looks right on screen but parses to nothing.
-  #   {"teams":[{"key":"platform","leads":["U…"],"keywords":["gateway"]}]}
-  # In YAML, quote anything numeric ("429") or it is read as a number.
-  # Only `key` is required; everything else can be added later over Slack.
+  # Do not use your own product's name as a keyword. In a company that builds
+  # agents, "agent" is in nearly every message, so every discussion would reach
+  # the model and be rejected: pure cost, no signal. Single words match whole
+  # words only ("hallucination" will not match "hallucinating"); multi-word
+  # entries match as substrings, so short phrases are usually safer.
   #
-  # Why it is read only once: after the first deploy the registry lives in
-  # Postgres and leads change it by DMing the agent. Re-applying this input on
-  # every boot would quietly undo their tuning on the next redeploy.
+  # Fill in home_channels. A team is never flagged about a discussion in a
+  # channel it already reads, and that is the single biggest noise saving here.
+  #
+  # Read ONCE, when the registry is empty. After the first deploy the registry
+  # lives in Postgres and leads edit it by DMing the agent, so re-applying this
+  # on every boot would silently undo their tuning on the next redeploy.
   TEAMS_CONFIG:
     name: TEAMS_CONFIG
     datatype: string
     optional: true
     display-as: long-text
     description: >-
-      Optional. Your teams, and who to notify about what. Leave blank to set this
-      up by DMing the agent instead. Only read on your first deploy; after that,
-      teams are edited in Slack. JSON or YAML; prefer JSON, which survives being
-      flattened to one line. Format: see teams.example.yml.
-  # Demo mode changes timing only — never the prefilter, the judge prompt or the
-  # confidence thresholds, so what an audience watches make decisions is the same
-  # logic that runs in production. It also cannot beat the sweep cron, which is
-  # the real latency floor: pair it with a once-a-minute cron. The sweep logs a
-  # loud warning on every run while it is enabled.
-  DEMO_MODE:
-    name: DEMO_MODE
-    datatype: string
-    optional: true
-    default: ""
-    description: >-
-      Set to 'true' only for a live demo: notifications arrive in about a minute
-      instead of 15, and the weekday 09:00-18:00 limit on instant DMs is lifted.
-      Turn it off afterwards. See docs/DEMO.md.
+      Optional. Your teams, and who to notify about what. Leave blank to set
+      this up by DMing the agent instead ("set up a team for platform, I am the
+      lead, we own the API gateway"). JSON or YAML — prefer JSON, which survives
+      being flattened to one line. Only `key` is required; unknown fields are
+      ignored. Applied only when the registry is empty; after that, edit teams
+      in Slack. Replace the example IDs with real ones — placeholders are
+      rejected. Example:
+      {"teams":[{"key":"platform","name":"Platform","description":"Owns the API gateway, auth/SSO and rate limiting.","leads":["U01ABCDEFGH"],"keywords":["gateway","envoy","rate limit","sso","429"],"topics":["API gateway routing and rate limits"],"home_channels":["C01ABCDEFGH"]}]}
   RADAR_TIMEZONE:
     name: RADAR_TIMEZONE
     datatype: string

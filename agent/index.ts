@@ -187,6 +187,7 @@ const whatDidIMiss = createTool({
         confidence: m.confidence,
         headline: m.headline,
         why: m.rationale,
+        landed: m.landed,
         link: slackArchiveLink(m.channel_id, m.root_ts),
         messages: m.message_count,
       })),

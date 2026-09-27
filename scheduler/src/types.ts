@@ -51,6 +51,7 @@ export interface PendingDigestRow {
   confidence: number;
   headline: string;
   rationale: string;
+  landed: string | null;
   channel_id: string;
   channel_name: string | null;
   root_ts: string;

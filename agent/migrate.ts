@@ -112,6 +112,22 @@ CREATE TABLE IF NOT EXISTS discussion_matches (
 -- cannot be measured — the one failure mode the thumbs-down loop cannot see.
 ALTER TABLE discussion_matches ADD COLUMN IF NOT EXISTS suppressed_reason TEXT;
 
+-- Where the thread had got to when this match was raised: what was decided, or
+-- what is still open. The judge produces one per discussion, but it is stored
+-- per match on purpose — a digest sent hours later then shows what was true
+-- when the lead was told rather than what a later re-score decided, and no read
+-- path needs an extra join. Nullable: matches raised before this existed.
+ALTER TABLE discussion_matches ADD COLUMN IF NOT EXISTS landed TEXT;
+
+-- The impact scorer's raw answers for the most recent scoring pass, and what
+-- the sweep did with them. Written for EVERY scored discussion, including the
+-- ones dropped before a judge call, because a drop means a lead was never told
+-- and that is the same class of decision as a suppressed match: it has to leave
+-- a record or recall cannot be measured. This is also what makes the drop
+-- thresholds tunable from real traffic rather than from intuition.
+ALTER TABLE discussions ADD COLUMN IF NOT EXISTS last_impact JSONB;
+ALTER TABLE discussions ADD COLUMN IF NOT EXISTS last_impact_outcome TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_matches_skipped
   ON discussion_matches(created_at) WHERE suppressed = TRUE;
 

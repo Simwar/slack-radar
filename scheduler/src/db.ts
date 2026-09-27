@@ -1,3 +1,4 @@
+import type { ImpactScores } from "./decide";
 import { Pool } from "pg";
 import type {
   DiscussionRow,
@@ -155,13 +156,14 @@ export async function markScored(discussionId: string, messageCount: number): Pr
 export async function insertMatch(
   discussionId: string,
   m: JudgedMatch,
+  landed: string | null,
   suppression?: { reason: string },
 ): Promise<{ id: string } | null> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO discussion_matches
        (discussion_id, team_key, signal_type, confidence, urgency, headline, rationale,
-        suppressed, suppressed_reason)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        suppressed, suppressed_reason, landed)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (discussion_id, team_key) DO NOTHING
      RETURNING id::text`,
     [
@@ -174,6 +176,7 @@ export async function insertMatch(
       m.rationale,
       Boolean(suppression),
       suppression?.reason ?? null,
+      landed,
     ],
   );
   return rows[0] ?? null;
@@ -191,14 +194,37 @@ export async function insertDecline(
   discussionId: string,
   teamKey: string,
   reason: string,
+  landed: string | null,
 ): Promise<void> {
   await pool.query(
     `INSERT INTO discussion_matches
        (discussion_id, team_key, signal_type, confidence, urgency, headline, rationale,
-        suppressed, suppressed_reason)
-     VALUES ($1,$2,'declined',0,'normal','','',TRUE,$3)
+        suppressed, suppressed_reason, landed)
+     VALUES ($1,$2,'declined',0,'normal','','',TRUE,$3,$4)
      ON CONFLICT (discussion_id, team_key) DO NOTHING`,
-    [discussionId, teamKey, reason],
+    [discussionId, teamKey, reason, landed],
+  );
+}
+
+/**
+ * Record the impact scorer's answers for this pass, and what the sweep did.
+ *
+ * Written for every scored discussion, including ones dropped before any judge
+ * call. A drop means a lead is never told, which is the same class of decision
+ * as a suppressed match and needs the same paper trail — and it is what lets
+ * the drop thresholds in config.ts be re-derived from real traffic later:
+ *
+ *   SELECT last_impact_outcome, count(*) FROM discussions
+ *    WHERE last_impact IS NOT NULL GROUP BY 1;
+ */
+export async function recordImpact(
+  discussionId: string,
+  scores: ImpactScores | null,
+  outcome: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE discussions SET last_impact = $2::jsonb, last_impact_outcome = $3 WHERE id = $1`,
+    [discussionId, scores ? JSON.stringify(scores) : null, outcome],
   );
 }
 
@@ -232,7 +258,7 @@ export async function recordNotification(row: {
 export async function getPendingDigestMatches(): Promise<PendingDigestRow[]> {
   const { rows } = await pool.query<PendingDigestRow>(
     `SELECT m.id::text AS match_id, m.team_key, t.name AS team_name, t.lead_slack_ids,
-            m.signal_type, m.urgency, m.confidence, m.headline, m.rationale,
+            m.signal_type, m.urgency, m.confidence, m.headline, m.rationale, m.landed,
             d.channel_id, w.channel_name, d.root_ts, d.message_count
        FROM discussion_matches m
        JOIN teams t ON t.key = m.team_key

@@ -35,6 +35,37 @@ export interface Candidate {
 }
 
 /**
+ * Teams that could be told about a discussion in this channel at all, before
+ * any scoring. Three exclusions, all deterministic and all free:
+ *
+ *  1. No leads — nobody to tell.
+ *  2. The channel is one of the team's home channels — they are in the room
+ *     already. This is the system's single biggest noise saving.
+ *  3. A lead is already in the thread.
+ *
+ * Rule 3 used to be a line in the judge prompt: "do not flag discussions where
+ * someone from the team is already clearly participating". The judge could
+ * never obey it. Transcripts are anonymised to person1/person2 before they are
+ * sent, so the model had no way to know who was speaking and answered from
+ * vibes — which is how a lead's own thread gets flagged back at them. It is a
+ * set intersection against discussions.participants, so it belongs here, costs
+ * nothing, and is exact.
+ */
+export function eligibleTeams(
+  teams: TeamRow[],
+  channelId: string,
+  participants: string[],
+): TeamRow[] {
+  const inThread = new Set(participants);
+  return teams.filter(
+    (team) =>
+      team.lead_slack_ids.length > 0 &&
+      !team.home_channel_ids.includes(channelId) &&
+      !team.lead_slack_ids.some((id) => inThread.has(id)),
+  );
+}
+
+/**
  * Cheap lexical shortlist, run before any model call.
  *
  * The judge is the expensive part, and most discussions in most channels are
@@ -43,12 +74,13 @@ export interface Candidate {
  * a team claims to care about. Recall matters more than precision here: it is
  * fine to hand the judge a weak candidate, and expensive to drop a real one.
  *
- * A team is never a candidate for a discussion in one of its own home channels
- * - it is already in the room.
+ * Eligibility (who could be told at all) is separated out into eligibleTeams so
+ * the impact scorer can apply exactly the same rule.
  */
 export function shortlistTeams(
   discussionText: string,
   channelId: string,
+  participants: string[],
   teams: TeamRow[],
   opts: { minScore: number; maxTeams: number },
 ): Candidate[] {
@@ -58,9 +90,7 @@ export function shortlistTeams(
 
   const candidates: Candidate[] = [];
 
-  for (const team of teams) {
-    if (team.home_channel_ids.includes(channelId)) continue;
-    if (!team.lead_slack_ids.length) continue; // nobody to tell
+  for (const team of eligibleTeams(teams, channelId, participants)) {
 
     let score = 0;
     const hits: string[] = [];

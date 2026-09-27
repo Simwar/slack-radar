@@ -1,5 +1,5 @@
 ---
-description: Watches every Slack channel it is invited to, works out which discussions a team lead would want to know about, and tells them - as an urgent DM if it cannot wait, otherwise in a twice-daily digest. Tunes itself on thumbs-up/thumbs-down reactions.
+description: Watches the Slack channels it is invited to, works out which discussions a team lead would want to know about, and DMs them - urgently if it cannot wait, otherwise in a twice-daily digest.
 tags:
   - slack
   - notifications
@@ -90,14 +90,36 @@ Nothing operational lives in the repo — this is a blueprint. Watched channels
 are set on the deploy page (**Observe Channel IDs** in the Slack section), and
 the team registry lives in Postgres.
 
-Bootstrap the registry by pasting YAML or JSON into the `TEAMS_CONFIG` deploy
-input (shape: `teams.example.yml`), or skip it and DM the agent: *"set up a team
-for platform, I am the lead, we own the API gateway"*. `TEAMS_CONFIG` is applied
-only when the registry is empty, so a redeploy never reverts what leads have
-tuned over Slack.
+Bootstrap it by pasting JSON (or YAML) into the `TEAMS_CONFIG` deploy input:
+
+```json
+{"teams":[
+  {"key":"platform",
+   "name":"Platform",
+   "description":"Owns the API gateway, auth/SSO and rate limiting.",
+   "leads":["U01ABCDEFGH"],
+   "keywords":["gateway","envoy","rate limit","sso","429"],
+   "topics":["API gateway routing and rate limits"],
+   "home_channels":["C01ABCDEFGH"]}
+]}
+```
+
+Only `key` is required. The full field list is `key`, `name`, `description`,
+`leads`, `topics`, `keywords`, `home_channels`, `realtime`, `min_confidence` —
+**anything else is ignored without warning**, which is the usual reason a
+hand-written config does nothing. `leads` are Slack user IDs (`U…`), not
+`@handles`, and the example placeholders are rejected on purpose.
+
+Or skip the input entirely and DM the agent: *"set up a team for platform, I am
+the lead, we own the API gateway"*.
+
+`TEAMS_CONFIG` is applied only when the registry is empty, so a redeploy never
+reverts what leads have tuned over Slack.
 
 Always fill in a team's **home channels** — channels they already sit in are
 never flagged for them, and it is the single most effective noise control here.
+See `README.md` for the annotated field table, or `teams.example.yml` for a
+worked example.
 
 ## Environment
 
@@ -144,4 +166,7 @@ Raw message text is stored in Postgres to make batched judging possible, and
 deleted after `MESSAGE_RETENTION_DAYS` (default 30). Transcripts sent to the
 model are anonymised to `person1`, `person2` — the judge does not need to know
 who is speaking to decide whether a subject is a team's business. Matches and
-notifications hold headlines and rationales, never message bodies.
+notifications hold headlines, rationales and the one-line "where it landed"
+summary — model-written prose about a thread, never message bodies. Those outlive the raw
+text they were derived from, which is the point: a digest stays readable after
+the transcript behind it has been purged.
