@@ -51,6 +51,27 @@ export async function openDM(userId: string): Promise<string | null> {
 }
 
 /**
+ * Join a public channel.
+ *
+ * Idempotent — Slack returns ok for a channel the bot is already in — but the
+ * caller still gates on watched_channels so this is not a call per channel per
+ * tick. Private channels cannot be self-joined at all; that surfaces as
+ * method_not_supported_for_channel_type and is reported, not retried silently.
+ */
+export async function joinChannel(
+  channelId: string,
+): Promise<{ ok: true; name: string | null } | { ok: false; error: string }> {
+  try {
+    const res = await client.conversations.join({ channel: channelId });
+    return { ok: true, name: (res.channel as { name?: string } | undefined)?.name ?? null };
+  } catch (err) {
+    const code = (err as { data?: { error?: string } })?.data?.error ?? "unknown";
+    lastSlackError = code;
+    return { ok: false, error: code };
+  }
+}
+
+/**
  * The Slack error code from the most recent failed call.
  *
  * Delivery happens two layers below the span that should record the failure,

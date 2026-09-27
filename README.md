@@ -18,22 +18,36 @@ Slack agent and the relevance judge — there is no mixed mode.
 
 Then:
 
-1. **Invite the bot** to every channel you want watched (`/invite @slack-radar`).
-2. **List those channel IDs** in the deploy page's Slack section, under
-   **Observe Channel IDs**. Leave **Allowed Channel IDs** blank. For local dev,
-   use `dev.interfaces.messaging.slack.observe_channel_ids` in `astropods.yml`.
+1. **List the channel IDs you want watched** in the deploy page's Slack
+   section, under **Observe Channel IDs**. Leave **Allowed Channel IDs** blank.
+   For local dev, use `dev.interfaces.messaging.slack.observe_channel_ids` in
+   `astropods.yml`.
+2. **Put the same list in `RADAR_AUTOJOIN_CHANNEL_IDS`** and the bot adds itself
+   to those channels on the next sweep — no `/invite` per channel. Needs the
+   `channels:join` scope. `scripts/deploy.sh` sets both from one variable:
+
+   ```bash
+   WATCHED_CHANNEL_IDS="C1,C2,C3" scripts/deploy.sh
+   ```
+
+   Private channels can't be self-joined (Slack limits `conversations.join` to
+   public ones), so those still need one `/invite` each. The sweep names them in
+   its log rather than failing quietly.
 3. **Set up at least one team**, either by pasting a registry into the
-   `TEAMS_CONFIG` input at deploy time (shape: `teams.example.yml`) or simply by
-   DMing the agent: *"set up a team for platform, I am the lead, we own the API
-   gateway and rate limiting"*.
+   `TEAMS_CONFIG` input at deploy time (see below) or simply by DMing the agent:
+   *"set up a team for platform, I am the lead, we own the API gateway and rate
+   limiting"*.
 
-Step 2 makes the bot *listen*. Step 3 decides who gets *told* — until a team
-exists with a lead and some keywords, the radar records messages but can never
-notify anyone.
+Steps 1 and 2 make the bot *listen*. Step 3 decides who gets *told* — until a
+team exists with a lead and some keywords, the radar records messages but can
+never notify anyone.
 
-Both halves of steps 1 and 2 are required: a channel with the bot invited but
-absent from Observe Channel IDs is silently invisible, because the sidecar drops
-its messages before the agent runs.
+**Both halves of steps 1 and 2 are required, and missing either is silent.** A
+channel the bot is in but that is absent from Observe Channel IDs is invisible,
+because the sidecar drops its messages before the agent runs. A channel listed
+there that the bot is not a member of is equally invisible, because Slack never
+sends the events in the first place. That double requirement is the single most
+common reason a freshly deployed radar sees nothing.
 
 ### Nothing operational lives in this repo
 
@@ -187,7 +201,9 @@ In the order worth checking:
 1. Were the containers running when you posted? The sidecar only sees live
    events — Slack does not replay, so a message sent while the agent was down is
    simply gone.
-2. Is the channel in `observe_channel_ids`? Invited-but-unlisted is silent.
+2. Is the channel in `observe_channel_ids`, **and** is the bot actually a member
+   of it? Either one missing is silent. Check the sweep log for
+   `channel auto-join:` — it reports what it joined and what it could not.
 3. Has 15 minutes passed?
 4. Is it a weekday between 09:00 and 18:00 in `RADAR_TIMEZONE`? Outside that,
    even a high-urgency match waits for the digest.
@@ -215,6 +231,7 @@ credential or a fact about your workspace:
 | `RADAR_TIMEZONE` | Timezone the realtime-DM working window is evaluated in. |
 | `RADAR_SLACK_BOT_TOKEN` | Per ingestion job — provider vars do not reach those containers. |
 | `MODEL_DEFAULT` | Picked from the gateway model menu at deploy. Currently unread: the decision model takes its id in the request body. |
+| `RADAR_AUTOJOIN_CHANNEL_IDS` | Per ingestion job. Comma-separated channel IDs the bot joins itself. Same list as Observe Channel IDs. |
 
 ### Writing `TEAMS_CONFIG`
 

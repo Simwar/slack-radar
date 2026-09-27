@@ -231,6 +231,18 @@ ingestion:
           Slack bot token (xoxb-...) so this job can DM leads and read their
           reactions. Same value as the agent's Slack token — scheduled jobs do
           not inherit it, so it has to be given again here.
+      - name: RADAR_AUTOJOIN_CHANNEL_IDS
+        datatype: string
+        optional: true
+        default: ""
+        description: >-
+          Comma-separated channel IDs the bot should add ITSELF to, so nobody
+          has to /invite it channel by channel. Set this to the same list as the
+          deploy page's Observe Channel IDs — a channel the sidecar forwards but
+          the bot is not in produces nothing, and vice versa. Needs the
+          channels:join scope; public channels only, private ones still need one
+          manual invite each. scripts/deploy.sh sets this from
+          WATCHED_CHANNEL_IDS so one variable drives both halves.
       #
       # Everything else the sweep does is tuned in scheduler/src/config.ts, NOT
       # here. Ripeness thresholds, spend ceilings, prefilter strictness, the
