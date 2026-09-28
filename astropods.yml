@@ -123,9 +123,9 @@ inputs:
     description: "Timezone for the instant-DM window (weekdays 09:00-18:00 local). Anything outside it waits for the next digest."
 
 # Scheduled jobs do not inherit the agent's Slack token, so it is repeated per
-# job. Postgres credentials DO reach them, via secretKeyRef from the knowledge
-# store — but only on the cron path; `ast agent trigger` is missing them
-# (astropods/astro#2902).
+# job. Postgres credentials do reach them, by secretKeyRef from the knowledge
+# store. On a platform older than astropods/astro#2902 that is true of the cron
+# path only, and a job started by `ast agent trigger` dies with 28000.
 ingestion:
   # Score ripe discussions and DM anything urgent.
   discussion_sweep:

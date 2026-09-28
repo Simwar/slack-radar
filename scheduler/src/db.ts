@@ -25,11 +25,11 @@ import type {
  * `ast project` gives ingestion containers the full set — which is exactly how
  * it reached a deploy.
  *
- * Credentials arrive by secretKeyRef from the knowledge store and DO reach a
- * cron-triggered job. They do not reach one started by `ast agent trigger`,
- * which builds its Job without them (astropods/astro#2902). POSTGRES_URL is
- * agent-only, so it is a fallback that has never yet fired; it costs a branch
- * and would save a deploy if that changes.
+ * Credentials arrive by secretKeyRef from the knowledge store. Before
+ * astropods/astro#2902 that was true of cron-triggered jobs only, and one
+ * started by `ast agent trigger` died here with 28000; on an older platform it
+ * still will. POSTGRES_URL is agent-only, so that fallback has never yet
+ * fired; it costs a branch and would save a deploy if that changes.
  *
  * Read once at module load: these do not change under a running process, and
  * two jobs import this file.
