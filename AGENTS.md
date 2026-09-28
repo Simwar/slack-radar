@@ -486,8 +486,8 @@ The cron is the real latency floor and no env var moves it, so a fast loop also
 needs a more frequent `discussion_sweep` in `dev.schedules`.
 
 `scripts/demo-reset.sql` clears observed and derived state while keeping the
-team registry. It exists because matches are raise-once, so a rehearsal
-permanently consumes the demo message. Runbook: `docs/DEMO.md`.
+team registry. It exists because matches are raise-once: without it, a second
+run at the same message produces nothing and looks like a failure.
 
 ## Known astro-cli issues
 

@@ -356,11 +356,11 @@ SELECT last_impact_outcome, count(*) FROM discussions
 | `FEEDBACK_MAX_CHECKS` | 150 | Reaction lookups per run. |
 | `MESSAGE_RETENTION_DAYS` | 30 | Raw message text is deleted after this. **Policy, not tuning** — re-expose this one as an input first if a privacy review needs it changeable without a deploy. |
 
-## Demoing it
+## Showing it working quickly
 
-Production timings make it undemoable — 15 minutes to a DM, and realtime
-delivery only on weekdays 09:00-18:00. There is no demo *mode*; there are the
-constants above, set explicitly:
+Production timings make it hard to demonstrate — 15 minutes to a DM, and
+realtime delivery only on weekdays 09:00-18:00. There is no demo *mode*; there
+are the constants above, set explicitly:
 
 ```bash
 SWEEP_QUIET_MINUTES=1 SWEEP_MIN_AGE_MINUTES=0 SWEEP_BURST_MESSAGES=3 \
@@ -373,11 +373,16 @@ things. That was the point of the old `DEMO_MODE` flag, and spelling the values
 out keeps the property while removing a second code path that could drift from
 the first — and a flag that is easy to leave switched on.
 
-Pair it with a once-a-minute `discussion_sweep` cron (the cron is the real
-latency floor) and reset between rehearsals with `scripts/demo-reset.sql` —
-matches are raise-once, so re-posting the same demo message does nothing.
+Pair it with a once-a-minute `discussion_sweep` cron — the cron is the real
+latency floor, so the env vars alone change nothing.
 
-Full runbook, beat by beat: **[docs/DEMO.md](docs/DEMO.md)**.
+Between runs, `scripts/demo-reset.sql` clears observed and derived state while
+keeping the team registry. Matches are raise-once, so without it a second
+attempt at the same message does nothing at all.
+
+Unset every one of those variables afterwards. Left in place they judge
+half-formed threads, and a midnight-to-midnight window across all seven days is
+how you end up DMing people at 03:00.
 
 ## Rollout
 
