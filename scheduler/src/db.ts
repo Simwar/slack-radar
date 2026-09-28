@@ -39,19 +39,30 @@ const PG_USER = process.env.POSTGRES_USER || "";
 const PG_URL = process.env.POSTGRES_URL || "";
 
 function poolConfig(): PoolConfig {
-  const common: PoolConfig = { connectionTimeoutMillis: 3000 };
+  // host/port go on EVERY path. Leaving them off when the credentials are
+  // missing sends pg to its localhost default, so a credentials problem
+  // surfaces as ECONNREFUSED 127.0.0.1 and hides whether the real host was
+  // reachable at all. Ask how I know.
+  const common: PoolConfig = {
+    connectionTimeoutMillis: 3000,
+    host: process.env.POSTGRES_HOST,
+    port: process.env.POSTGRES_PORT ? Number(process.env.POSTGRES_PORT) : 5432,
+  };
   if (PG_USER) {
     return {
       ...common,
-      host: process.env.POSTGRES_HOST,
-      port: process.env.POSTGRES_PORT ? Number(process.env.POSTGRES_PORT) : 5432,
       user: PG_USER,
       password: process.env.POSTGRES_PASSWORD,
       database: process.env.POSTGRES_DB,
     };
   }
-  if (PG_URL) return { ...common, connectionString: PG_URL };
+  if (PG_URL) return { connectionTimeoutMillis: 3000, connectionString: PG_URL };
   return common;
+}
+
+/** True when this container has no usable credentials, however the host looks. */
+export function dbMisconfigured(): boolean {
+  return !PG_USER && !PG_URL;
 }
 
 /** Log-safe. Never returns the password or the URL (which embeds it). */
@@ -62,10 +73,14 @@ export function describeDb(): string {
   if (PG_URL) {
     return "via POSTGRES_URL (POSTGRES_USER absent — secrets do not reach ingestion containers)";
   }
+  // Report the host either way: it tells the next reader whether the
+  // non-secret connection vars reached this container even though the
+  // credentials did not, which is the whole shape of the problem.
+  const host = process.env.POSTGRES_HOST;
   return (
-    "MISCONFIGURED: neither POSTGRES_USER nor POSTGRES_URL is set in this container. " +
-    "Postgres secrets are injected into the agent container only; set POSTGRES_USER, " +
-    "POSTGRES_PASSWORD and POSTGRES_DB as inputs on this ingestion job"
+    `MISCONFIGURED: no POSTGRES_USER and no POSTGRES_URL (host=${host || "unset"}). ` +
+    "Postgres secrets reach the agent container only — set POSTGRES_USER, POSTGRES_PASSWORD " +
+    "and POSTGRES_DB as inputs on this ingestion job"
   );
 }
 
@@ -83,6 +98,10 @@ function isTransientDbError(err: unknown): boolean {
 }
 
 export async function assertConnection(): Promise<void> {
+  // No credentials is not a blip, and retrying it six times just buys a
+  // slower, less clear failure.
+  if (dbMisconfigured()) throw new Error(`[slack-radar] db ${describeDb()}`);
+
   // The managed Postgres is briefly unavailable during its own redeploys.
   // Retry that; fail fast on genuine misconfig (auth, bad db name).
   const attempts = 6;
