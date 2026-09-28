@@ -41,22 +41,28 @@ export interface Candidate {
  *  1. No leads — nobody to tell.
  *  2. The channel is one of the team's home channels — they are in the room
  *     already. This is the system's single biggest noise saving.
- *  3. A lead is already in the thread.
+ *  3. A lead is active in the recent part of the thread.
  *
- * Rule 3 used to be a line in the judge prompt: "do not flag discussions where
- * someone from the team is already clearly participating". The judge could
- * never obey it. Transcripts are anonymised to person1/person2 before they are
- * sent, so the model had no way to know who was speaking and answered from
- * vibes — which is how a lead's own thread gets flagged back at them. It is a
- * set intersection against discussions.participants, so it belongs here, costs
- * nothing, and is exact.
+ * The judge cannot apply rule 3 itself: transcripts are anonymised before they
+ * are sent.
  */
 export function eligibleTeams(
   teams: TeamRow[],
   channelId: string,
-  participants: string[],
+  engaged: string[],
 ): TeamRow[] {
-  return teams.filter((t) => ineligibleBecause(t, channelId, participants) === null);
+  return teams.filter((t) => ineligibleBecause(t, channelId, engaged) === null);
+}
+
+/** Authors of the last `count` messages — who is engaged now, as opposed to
+ *  everyone in discussions.participants. */
+export function recentAuthors(
+  messages: { user_id: string | null }[],
+  count: number,
+): string[] {
+  const out = new Set<string>();
+  for (const m of messages.slice(-count)) if (m.user_id) out.add(m.user_id);
+  return [...out];
 }
 
 /**
@@ -70,12 +76,12 @@ export function eligibleTeams(
 export function ineligibleBecause(
   team: TeamRow,
   channelId: string,
-  participants: string[],
+  engaged: string[],
 ): string | null {
   if (!team.lead_slack_ids.length) return "no leads";
   if (team.home_channel_ids.includes(channelId)) return "this is one of its home channels";
-  const lead = team.lead_slack_ids.find((id) => participants.includes(id));
-  if (lead) return `lead ${lead} is in the thread`;
+  const lead = team.lead_slack_ids.find((id) => engaged.includes(id));
+  if (lead) return `lead ${lead} is active in the thread`;
   return null;
 }
 
@@ -94,7 +100,7 @@ export function ineligibleBecause(
 export function shortlistTeams(
   discussionText: string,
   channelId: string,
-  participants: string[],
+  engaged: string[],
   teams: TeamRow[],
   opts: { minScore: number; maxTeams: number },
 ): Candidate[] {
@@ -104,7 +110,7 @@ export function shortlistTeams(
 
   const candidates: Candidate[] = [];
 
-  for (const team of eligibleTeams(teams, channelId, participants)) {
+  for (const team of eligibleTeams(teams, channelId, engaged)) {
 
     let score = 0;
     const hits: string[] = [];
