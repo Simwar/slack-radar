@@ -9,71 +9,36 @@ agent:
   interfaces:
     frontend: false
     messaging: true
-  # /health (agent/health.ts) returns 200 whenever the process/event loop is
-  # responsive. One block drives BOTH liveness and readiness (the platform
-  # generates identical probes), so the check must NOT gate on Slack/Postgres:
-  # 503-ing on a dependency blip would restart the pod every check.
+  # Drives BOTH liveness and readiness, so it must not gate on Slack or
+  # Postgres — 503 on a dependency blip would restart the pod every check.
   healthcheck:
     path: /health
     interval: 10s
     timeout: 5s
     retries: 5
 
+# Local dev only. Deployed, channels come from the deploy page's "Observe
+# Channel IDs" and crons are set at deploy time.
 dev:
   interfaces:
     messaging:
       adapters: [slack]
       slack:
-        # EVERY channel the radar watches must be listed here AND have the bot
-        # invited. Without observe_channel_ids the sidecar drops non-mention
-        # messages ("Ignoring top-level message") and the radar sees nothing.
-        # scripts/deploy.sh builds this list for the deployed agent from
-        # WATCHED_CHANNEL_IDS; this block is local dev only.
-        # LOCAL DEV ONLY — replace with your own channel IDs.
-        #
-        # Deployed, this is NOT set from the repo. The deploy page's Slack
-        # section has an "Observe Channel IDs" field; that is the real control,
-        # and it is per-deployment config rather than code. Leave "Allowed
-        # Channel IDs" BLANK there — a non-empty allowlist makes the sidecar
-        # post "This app has not been enabled for this channel or user" into
-        # every channel it rejects.
+        # Replace with your own. Leave "Allowed Channel IDs" blank everywhere:
+        # a non-empty allowlist makes the sidecar post a refusal into every
+        # channel it rejects.
         observe_channel_ids:
           - C0BU9P6R5U5
   schedules:
-    # This cron is the REAL latency floor: nothing can be judged sooner than the
-    # next tick, whatever SWEEP_QUIET_MINUTES says. At */15 a lone message is
-    # judged ~15min after posting and a busy incident thread the same, because
-    # the burst rule fires it immediately. Move to */5 if 15min is too slow for
-    # incidents; that is 3x the pod churn for a ~10min floor.
+    # The real latency floor — nothing is judged sooner than the next tick.
     discussion_sweep: "* * * * *"
-    # Twice a day, start of morning and after lunch. Both are deliberately
-    # inside the working window.
     lead_digest: "0 9,14 * * 1-5"
 
-# No `models:` entry for Anthropic or Baseten, on purpose.
-#
-# A `models.anthropic` provider injects ANTHROPIC_API_KEY into the AGENT
-# container only — it does not reach ingestion containers, which would force the
-# sweep to carry a second copy of the same secret. Declaring the key as a
-# top-level input instead injects it into EVERY container, so "the same
-# Anthropic key throughout" is literally one value. Baseten works the same way,
-# which keeps the two paths symmetric.
-#
-# The gateway entry below is the one exception, and it is deliberately NOT a
-# credential path for the agent or the judge — both still resolve through the
-# two top-level keys above. It exists so the platform injects ASTRO_GATEWAY_URL
-# and ASTRO_GATEWAY_API_KEY, which the decision model (jev-1-13-0, for relevance
-# classification) needs.
-#
-# Whether those vars reach the INGESTION containers is the open question, and it
-# is the whole reason this entry is here: the sweep logs `gateway url=… key=…`
-# at the top of every run. If they turn out to be agent-only, this moves to
-# top-level inputs like the other two keys, and this comment goes back to
-# saying no provider entries at all.
-#
-# The `models` list is a deploy-time menu injected as MODEL_DEFAULT. Nothing
-# reads it yet: the decisions API takes its model id in the request body, so the
-# menu exists only because a gateway entry needs one.
+# Gateway entry only, and only to get ASTRO_GATEWAY_URL / ASTRO_GATEWAY_API_KEY
+# injected for the jev-1-13-0 decision model. The agent and judge credentials
+# are top-level inputs instead: a provider entry reaches the agent container
+# only, which would make the sweep carry a second copy of the same secret.
+# MODEL_DEFAULT is injected and unread — decisions take the model id in the body.
 models:
   default:
     provider: gateway
@@ -84,52 +49,39 @@ knowledge:
     provider: postgres
 
 inputs:
-  # ── Path selection ─────────────────────────────────────────────────────────
-  # Set BASETEN_API_KEY and everything (agent + judge) runs on Baseten. Leave it
-  # blank and everything runs on Anthropic. There is no per-container override
-  # and no mixed mode: agent/model.ts and scheduler/src/model.ts apply the same
-  # rule, so the two containers cannot end up on different providers.
+  # Set BASETEN_API_KEY and the whole agent (chat + judge) runs on Baseten;
+  # leave it blank and everything runs on Anthropic. No mixed mode.
   ANTHROPIC_API_KEY:
     name: ANTHROPIC_API_KEY
     datatype: string
     secret: true
     optional: true
-    description: "Anthropic API key, used by BOTH the agent and the sweep judge. Required unless BASETEN_API_KEY is set."
+    description: "Used by both the agent and the sweep judge. Required unless BASETEN_API_KEY is set."
   ANTHROPIC_MODEL:
     name: ANTHROPIC_MODEL
     datatype: string
     default: "claude-haiku-4-5"
-    description: >-
-      Model for the Anthropic path, used for both chatting and triage. Haiku is
-      the default because triage is high volume. Raise it to claude-sonnet-5 or
-      claude-opus-5 if the radar misses things worth knowing.
+    description: "Model for the Anthropic path, for chat and triage. Raise to claude-sonnet-5 if the radar misses things worth knowing."
   BASETEN_API_KEY:
     name: BASETEN_API_KEY
     datatype: string
     secret: true
     optional: true
-    description: "Set this to switch the WHOLE agent to Baseten. Leave blank to use Anthropic. Baseten wins when both are set."
+    description: "Set this to switch the whole agent to Baseten. Baseten wins when both keys are set."
   BASETEN_BASE_URL:
     name: BASETEN_BASE_URL
     datatype: string
     optional: true
     default: "https://inference.baseten.co/v1"
-    description: "Baseten inference base URL. Editable here so the endpoint can move without a code deploy."
+    description: "Baseten inference base URL. Change it for a dedicated deployment."
   BASETEN_MODEL:
     name: BASETEN_MODEL
     datatype: string
     optional: true
     display-as: select
-    # Baseten Model APIs catalogue, verified against
-    # docs.baseten.co/development/model-apis/overview.
-    #
-    # This is a SNAPSHOT and it will go stale — an earlier version of this list
-    # was copied from Mastra's bundled provider registry and five of its seven
-    # entries had already been retired, so picking one from the dropdown would
-    # have failed at the first model call. `/v1/models` is authoritative:
-    #   curl https://inference.baseten.co/v1/models -H "Authorization: Bearer $BASETEN_API_KEY"
-    # Re-check before adding an entry here. `display-as: select` means a wrong
-    # value here is a dead option a deployer can pick, not a typo they can fix.
+    # Snapshot, and it will go stale — an earlier copy of this list had five
+    # retired entries, each a dead option a deployer could pick. Verify before
+    # editing: curl $BASETEN_BASE_URL/models -H "Authorization: Bearer $BASETEN_API_KEY"
     options:
       - zai-org/GLM-4.7
       - zai-org/GLM-5.3
@@ -144,78 +96,37 @@ inputs:
       - nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B
       - openai/gpt-oss-120b
     default: "zai-org/GLM-4.7"
-    description: >-
-      Model for the Baseten path. Every model listed supports tool calling, which
-      this agent requires. For lower cost pick a Flash/Fast tier or
-      openai/gpt-oss-120b. Run /v1/models for current pricing.
+    description: "Model for the Baseten path. Every option supports tool calling, which this agent requires. Flash/Fast tiers are cheaper."
   SLACK_WORKSPACE_DOMAIN:
     name: SLACK_WORKSPACE_DOMAIN
     datatype: string
-    description: "Your Slack workspace subdomain (the 'acme' in acme.slack.com). Used to build thread deep links. Links degrade to a slack:// URI without it."
-  # ── Team registry ─────────────────────────────────────────────────────────
-  #
-  # Fully annotated example: teams.example.yml. That file is NOT shipped in the
-  # image, so the description below carries a working value inline — whoever
-  # fills this in is on the deploy page, not in the repo.
-  #
-  # Fields. Only `key` is required, and ANY KEY NOT ON THIS LIST IS IGNORED
-  # WITHOUT WARNING, which is the most common way a hand-written config does
-  # nothing:
-  #
-  #   key             stable identifier, required
-  #   name            display name; also matched, at half weight
-  #   description     what the team owns, in prose — the judge reads this
-  #   leads           Slack user IDs (U…), NOT @handles
-  #   topics          phrases describing the team's area
-  #   keywords        literal terms to match
-  #   home_channels   channels the team already reads; never flagged for them
-  #   realtime        false = digest only, never an instant DM   (default true)
-  #   min_confidence  0-1 bar a match must clear                 (default 0.6)
-  #
-  # Prefer JSON. YAML depends on line breaks, and this value passes through web
-  # forms and shell variables that can flatten it to a single line — which still
-  # looks right on screen and parses to nothing. If you do use YAML, quote
-  # anything numeric ("429") or it is read as a number.
-  #
-  # Do not use your own product's name as a keyword. In a company that builds
-  # agents, "agent" is in nearly every message, so every discussion would reach
-  # the model and be rejected: pure cost, no signal. Single words match whole
-  # words only ("hallucination" will not match "hallucinating"); multi-word
-  # entries match as substrings, so short phrases are usually safer.
-  #
-  # Fill in home_channels. A team is never flagged about a discussion in a
-  # channel it already reads, and that is the single biggest noise saving here.
-  #
-  # Read ONCE, when the registry is empty. After the first deploy the registry
-  # lives in Postgres and leads edit it by DMing the agent, so re-applying this
-  # on every boot would silently undo their tuning on the next redeploy.
+    description: "The 'acme' in acme.slack.com. Without it, thread links degrade to a slack:// URI."
+  # Field reference and a worked example: README.md, teams.example.yml.
+  # Unknown fields are ignored silently, which is the usual reason a
+  # hand-written registry does nothing.
   TEAMS_CONFIG:
     name: TEAMS_CONFIG
     datatype: string
     optional: true
     display-as: long-text
     description: >-
-      Optional. Your teams, and who to notify about what. Leave blank to set
-      this up by DMing the agent instead ("set up a team for platform, I am the
-      lead, we own the API gateway"). JSON or YAML — prefer JSON, which survives
+      Optional. Your teams, and who to notify about what. Leave blank to set it
+      up by DMing the agent instead. JSON or YAML — prefer JSON, which survives
       being flattened to one line. Only `key` is required; unknown fields are
       ignored. Applied only when the registry is empty; after that, edit teams
-      in Slack. Replace the example IDs with real ones — placeholders are
-      rejected. Example:
+      in Slack. Use real Slack IDs, placeholders are rejected. Example:
       {"teams":[{"key":"platform","name":"Platform","description":"Owns the API gateway, auth/SSO and rate limiting.","leads":["U01ABCDEFGH"],"keywords":["gateway","envoy","rate limit","sso","429"],"topics":["API gateway routing and rate limits"],"home_channels":["C01ABCDEFGH"]}]}
   RADAR_TIMEZONE:
     name: RADAR_TIMEZONE
     datatype: string
     default: "America/New_York"
-    description: >-
-      Your team's timezone. Instant DMs are only sent on weekdays between 09:00
-      and 18:00 local; anything outside that waits for the next digest.
+    description: "Timezone for the instant-DM window (weekdays 09:00-18:00 local). Anything outside it waits for the next digest."
 
+# Scheduled jobs inherit neither the agent's Slack token nor its Postgres
+# secrets, so both are repeated per job. The Postgres three are a fallback
+# only: the code prefers POSTGRES_URL, which does reach these containers.
 ingestion:
-  # ---------------------------------------------------------------------------
-  # The scoring loop: pick ripe discussions, shortlist teams lexically, judge
-  # with one model call, raise matches, and DM anything urgent.
-  # ---------------------------------------------------------------------------
+  # Score ripe discussions and DM anything urgent.
   discussion_sweep:
     container:
       build:
@@ -227,56 +138,33 @@ ingestion:
       - name: RADAR_SLACK_BOT_TOKEN
         datatype: string
         secret: true
-        description: >-
-          Slack bot token (xoxb-...) so this job can DM leads and read their
-          reactions. Same value as the agent's Slack token — scheduled jobs do
-          not inherit it, so it has to be given again here.
+        description: "Slack bot token (xoxb-...), so this job can DM leads and read their reactions. Same value as the agent's."
       - name: RADAR_AUTOJOIN_CHANNEL_IDS
         datatype: string
         optional: true
         default: ""
         description: >-
-          Comma-separated channel IDs the bot should add ITSELF to, so nobody
-          has to /invite it channel by channel. Set this to the same list as the
-          deploy page's Observe Channel IDs — a channel the sidecar forwards but
-          the bot is not in produces nothing, and vice versa. Needs the
-          channels:join scope; public channels only, private ones still need one
-          manual invite each. scripts/deploy.sh sets this from
-          WATCHED_CHANNEL_IDS so one variable drives both halves.
-      # Escape hatch for the credentials split below. The platform injects the
-      # five POSTGRES_* values into the AGENT container via secrets, and
-      # secrets do not reach ingestion containers — so a deployed job connects
-      # to the right server and is rejected with 28000 (no user name in the
-      # startup packet) before it runs a single query. The code prefers
-      # POSTGRES_URL, which is injected as an ordinary connection var and
-      # survives the split; set these three only if that is not enough.
-      # Read them off the agent container, they are platform-generated.
+          Comma-separated channel IDs the bot adds ITSELF to, instead of being
+          invited one at a time. Use the same list as Observe Channel IDs: a
+          channel the sidecar forwards but the bot is not in produces nothing,
+          and so does the reverse. Needs the channels:join scope, and works for
+          public channels only.
       - name: POSTGRES_USER
         datatype: string
         optional: true
-        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
       - name: POSTGRES_PASSWORD
         datatype: string
         secret: true
         optional: true
-        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
       - name: POSTGRES_DB
         datatype: string
         optional: true
-        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
-      #
-      # Everything else the sweep does is tuned in scheduler/src/config.ts, NOT
-      # here. Ripeness thresholds, spend ceilings, prefilter strictness, the
-      # feedback weighting, emoji names and retention are all hardcoded defaults
-      # with a documented rationale, and README.md has the table.
-      #
-      # They were inputs originally, and that was wrong: it made `ast project
-      # configure` look like twenty decisions when nobody has the information to
-      # improve on the defaults until the radar has run for a week. Credentials
-      # and locale are the only things a deployer actually knows.
-      #
-      # Every constant still reads its env var first, so re-exposing one is a
-      # two-line change with no code deploy. Un-comment what you need:
+        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
+      # Everything else is hardcoded in scheduler/src/config.ts, with the table
+      # in README.md. Each constant still reads its env var first, so
+      # re-exposing one is uncommenting a stub here — no code deploy.
       #
       # - name: JUDGE_MODEL          # run a different model for the judge than for chat
       #   datatype: string
@@ -286,13 +174,11 @@ ingestion:
       # - name: SWEEP_BURST_MESSAGES # default 8  — ...or this many messages while still live
       # - name: SWEEP_MAX_DISCUSSIONS# default 60 — hard cap on judge calls per run
       # - name: PREFILTER_MIN_SCORE  # default 1  — raise to cut model spend, at the cost of recall
+      # - name: JEV_IMPACT_FLOOR     # default 0.15 — raise to drop more before the judge
       # - name: NOISE_PENALTY        # default 0.3 — how hard thumbs-down raises the bar; 0 disables the feedback loop
       # - name: MESSAGE_RETENTION_DAYS # default 30 — re-expose this one FIRST if a privacy review needs it changeable
 
-  # ---------------------------------------------------------------------------
-  # The default delivery path: everything not urgent enough to interrupt for,
-  # batched per lead.
-  # ---------------------------------------------------------------------------
+  # Batched delivery for everything not urgent enough to interrupt for.
   lead_digest:
     container:
       build:
@@ -304,28 +190,19 @@ ingestion:
       - name: RADAR_SLACK_BOT_TOKEN
         datatype: string
         secret: true
-        description: >-
-          Slack bot token (xoxb-...) so this job can send digest DMs. Same value
-          as the sweep's.
-      # Escape hatch for the credentials split below. The platform injects the
-      # five POSTGRES_* values into the AGENT container via secrets, and
-      # secrets do not reach ingestion containers — so a deployed job connects
-      # to the right server and is rejected with 28000 (no user name in the
-      # startup packet) before it runs a single query. The code prefers
-      # POSTGRES_URL, which is injected as an ordinary connection var and
-      # survives the split; set these three only if that is not enough.
-      # Read them off the agent container, they are platform-generated.
+        description: "Slack bot token (xoxb-...), so this job can send digest DMs. Same value as the sweep's."
       - name: POSTGRES_USER
         datatype: string
         optional: true
-        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
       - name: POSTGRES_PASSWORD
         datatype: string
         secret: true
         optional: true
-        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
       - name: POSTGRES_DB
         datatype: string
         optional: true
-        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
-      # DIGEST_MAX_ITEMS (default 12) lives in scheduler/src/config.ts.
+        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
+      # This job has no working-hours gate — the cron IS the schedule. Keep it
+      # inside working hours; DIGEST_MAX_ITEMS lives in config.ts.
