@@ -41,14 +41,10 @@ export interface Candidate {
  *  1. No leads — nobody to tell.
  *  2. The channel is one of the team's home channels — they are in the room
  *     already. This is the system's single biggest noise saving.
- *  3. A lead is active in the recent part of the thread (see recentAuthors).
+ *  3. A lead is active in the recent part of the thread.
  *
- * Rule 3 used to be a line in the judge prompt: "do not flag discussions where
- * someone from the team is already clearly participating". The judge could
- * never obey it. Transcripts are anonymised to person1/person2 before they are
- * sent, so the model had no way to know who was speaking and answered from
- * vibes — which is how a lead's own thread gets flagged back at them. Done
- * here it is a set intersection, so it costs nothing and is exact.
+ * The judge cannot apply rule 3 itself: transcripts are anonymised before they
+ * are sent.
  */
 export function eligibleTeams(
   teams: TeamRow[],
@@ -58,16 +54,8 @@ export function eligibleTeams(
   return teams.filter((t) => ineligibleBecause(t, channelId, engaged) === null);
 }
 
-/**
- * Who is active in the recent part of a thread.
- *
- * Eligibility asks whether a lead is already engaged, and someone who said one
- * thing forty messages ago is not: the thread has moved on, and a decision
- * forming in it now is exactly what they would want to be told about. Using
- * the tail rather than the whole of discussions.participants keeps the fix for
- * a lead's own thread being flagged back at them, without muting every thread
- * they have ever touched.
- */
+/** Authors of the last `count` messages — who is engaged now, as opposed to
+ *  everyone in discussions.participants. */
 export function recentAuthors(
   messages: { user_id: string | null }[],
   count: number,

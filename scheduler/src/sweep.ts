@@ -131,7 +131,6 @@ async function processDiscussion(
         // Say why when nothing can be scored. Without this the run reads as
         // "the radar did nothing" rather than "the radar deliberately did
         // nothing, and here is the rule".
-        // Recent authors, not every participant: see recentAuthors.
         const engaged = recentAuthors(messages, CONFIG.leadEngagedMessages());
 
         if (!eligibleTeams(teams, discussion.channel_id, engaged).length) {
