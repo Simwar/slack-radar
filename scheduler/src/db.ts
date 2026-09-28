@@ -332,34 +332,6 @@ export async function recordNotification(row: {
   );
 }
 
-/** Channels the bot is already in, by either route: a message was observed, or
- *  the sweep joined it. Used to skip join calls that would be no-ops. */
-export async function getWatchedChannelIds(): Promise<Set<string>> {
-  const { rows } = await pool.query<{ channel_id: string }>(
-    `SELECT channel_id FROM watched_channels`,
-  );
-  return new Set(rows.map((r) => r.channel_id));
-}
-
-/**
- * Record a channel the sweep just joined.
- *
- * DO NOTHING on conflict rather than updating: watch_since is the horizon the
- * ripeness query filters on, so overwriting it would re-cut history under a
- * channel that was already being watched.
- */
-export async function recordWatchedChannel(
-  channelId: string,
-  channelName: string | null,
-): Promise<void> {
-  await pool.query(
-    `INSERT INTO watched_channels (channel_id, channel_name)
-     VALUES ($1,$2)
-     ON CONFLICT (channel_id) DO NOTHING`,
-    [channelId, channelName],
-  );
-}
-
 /** Matches raised but not yet delivered by either path. */
 export async function getPendingDigestMatches(): Promise<PendingDigestRow[]> {
   const { rows } = await pool.query<PendingDigestRow>(

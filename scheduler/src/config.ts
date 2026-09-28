@@ -109,26 +109,6 @@ export const CONFIG = {
   /** Ratings needed before a pairing's feedback is trusted to move its threshold. */
   noiseMinSamples: () => num("NOISE_MIN_SAMPLES", 5),
 
-  /* ── Channel membership ───────────────────────────────────────────────── */
-
-  /**
-   * Channels the sweep joins itself, as comma-separated Slack channel IDs.
-   * Blank disables it and the bot has to be invited by hand, one channel at a
-   * time, which is the thing this exists to remove.
-   *
-   * Set it to the SAME list as the deploy page's Observe Channel IDs: a channel
-   * the sidecar forwards but the bot is not in produces nothing, and a channel
-   * the bot is in but the sidecar does not forward is equally silent. Both
-   * halves are required, and `scripts/deploy.sh` sets both from one variable.
-   *
-   * Needs the channels:join scope, and only works for public channels.
-   */
-  autojoinChannelIds: () =>
-    str("RADAR_AUTOJOIN_CHANNEL_IDS", "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-
   /* ── Impact scoring (the gateway decision model) ──────────────────────── */
 
   /** Decision model id, sent in the request body. */

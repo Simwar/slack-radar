@@ -151,18 +151,12 @@ the table in `README.md`. Deploy asks only for credentials and workspace locale.
 ## Slack app setup
 
 OAuth scopes: `channels:history`, `groups:history` (private channels),
-`chat:write`, `im:write`, `reactions:read`, `users:read`, and `channels:join`
-for self-joining public channels.
+`chat:write`, `im:write`, `reactions:read`, `users:read`.
 
-List the channel IDs you want watched in the deploy's `observe_channel_ids`.
-Being forwarded by the sidecar and being a member of the channel are two
-separate requirements, and missing either is silent — so set
-`RADAR_AUTOJOIN_CHANNEL_IDS` to the same list and the sweep will put the bot in
-them on its next run, instead of you inviting it channel by channel.
-`scripts/deploy.sh` sets both from one `WATCHED_CHANNEL_IDS` variable.
-
-`conversations.join` is public-only, so **private channels still need one manual
-invite each** — the sweep reports those by name rather than retrying.
+Two separate requirements per channel, and missing either is silent: invite the
+bot to the channel, **and** list the channel ID in the deploy's
+`observe_channel_ids` (`scripts/deploy.sh` builds this from
+`WATCHED_CHANNEL_IDS`).
 
 Note the messaging sidecar drops any message carrying a Slack `bot_id`, so
 alerts posted by other apps are invisible; a discussion started by a bot alert is

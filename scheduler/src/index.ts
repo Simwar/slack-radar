@@ -19,7 +19,6 @@ async function main() {
         console.log(`[slack-radar] db ${describeDb()}`);
         await assertConnection();
         const stats = await runSweep();
-        span.setAttribute("radar.channels_joined", stats.channelsJoined);
         span.setAttribute("radar.teams", stats.teams);
         span.setAttribute("radar.ripe_discussions", stats.ripeDiscussions);
         span.setAttribute("radar.purged_messages", stats.purgedMessages);

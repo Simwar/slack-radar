@@ -41,8 +41,7 @@
 #
 # Usage:
 #   scripts/deploy.sh                                     # redeploy
-#   WATCHED_CHANNEL_IDS="C1,C2,C3" scripts/deploy.sh      # OVERRIDE the deploy page,
-#                                                         # and have the bot join them
+#   WATCHED_CHANNEL_IDS="C1,C2,C3" scripts/deploy.sh      # OVERRIDE the deploy page
 #   RADAR_SLACK_BOT_TOKEN=xoxb-... scripts/deploy.sh      # (re)set the job token
 #
 set -euo pipefail
@@ -80,11 +79,6 @@ if [[ -n "$WATCHED_CHANNEL_IDS" ]]; then
   echo "NOTE: overwriting the deploy page's Observe Channel IDs with: ${WATCHED_CHANNEL_IDS}"
   # observe_channel_ids only, NO allowlist — see footgun #3 above.
   args+=(--var "SLACK_CONFIG={\"observe_channel_ids\":[${observe_json}]}")
-  # The same list to the sweep, which is the only container holding both a Slack
-  # token and the ability to call conversations.join. Being forwarded by the
-  # sidecar and being a member of the channel are two separate requirements, and
-  # missing either one is silent — this makes one variable satisfy both.
-  args+=(--var "RADAR_AUTOJOIN_CHANNEL_IDS=${WATCHED_CHANNEL_IDS}")
 fi
 
 if [[ -n "$SLACK_WORKSPACE_DOMAIN" ]]; then

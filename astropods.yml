@@ -140,21 +140,6 @@ ingestion:
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can DM leads and read their reactions. Same value as the agent's."
-      # secret: true is load-bearing, not a privacy claim. A non-secret
-      # ingestion input's VALUE never reaches the container — the platform only
-      # copies a variable into the mounted Secret when it is marked secret, so
-      # a plain string input silently arrives empty.
-      - name: RADAR_AUTOJOIN_CHANNEL_IDS
-        datatype: string
-        secret: true
-        optional: true
-        default: ""
-        description: >-
-          Comma-separated channel IDs the bot adds ITSELF to, instead of being
-          invited one at a time. Use the same list as Observe Channel IDs: a
-          channel the sidecar forwards but the bot is not in produces nothing,
-          and so does the reverse. Needs the channels:join scope, and works for
-          public channels only.
       # Everything else is hardcoded in scheduler/src/config.ts, with the table
       # in README.md. Each constant still reads its env var first, so
       # re-exposing one is uncommenting a stub here — no code deploy.

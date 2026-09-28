@@ -19,7 +19,6 @@ import {
 } from "./decide";
 import { CONFIG } from "./config";
 import { collectFeedback } from "./feedback";
-import { describeAutojoin, joinConfiguredChannels } from "./join";
 import { judgeDiscussion } from "./judge";
 import { describeJudge } from "./model";
 import { deliverRealtime, markItemNotified, withinWorkingHours } from "./notify";
@@ -293,7 +292,6 @@ async function processDiscussion(
 }
 
 export interface SweepStats {
-  channelsJoined: number;
   teams: number;
   ripeDiscussions: number;
   cappedOut: boolean;
@@ -312,15 +310,6 @@ export async function runSweep(): Promise<SweepStats> {
   // sentence saying why.
   console.log(`[slack-radar] impact ${describeImpact()}`);
 
-  // Before anything else: a channel the bot is not in produces no messages, so
-  // every later stage would run perfectly over nothing.
-  console.log(`[slack-radar] auto-join ${describeAutojoin()}`);
-  const joins = await joinConfiguredChannels();
-  if (joins.attempted) {
-    console.log(
-      `[slack-radar] channel auto-join: ${joins.joined} joined, ${joins.failed} failed, of ${joins.attempted} attempted`,
-    );
-  }
   const purged = await purgeOldMessages(CONFIG.retentionDays());
   if (purged) console.log(`[slack-radar] purged ${purged} message(s) past retention`);
 
@@ -331,7 +320,6 @@ export async function runSweep(): Promise<SweepStats> {
   if (!teams.length) {
     console.warn("[slack-radar] no teams in the registry — nothing to match against");
     return {
-      channelsJoined: joins.joined,
       teams: 0,
       ripeDiscussions: 0,
       cappedOut: false,
@@ -371,7 +359,6 @@ export async function runSweep(): Promise<SweepStats> {
   );
 
   return {
-    channelsJoined: joins.joined,
     teams: teams.length,
     ripeDiscussions: discussions.length,
     cappedOut: discussions.length === CONFIG.maxDiscussions(),
