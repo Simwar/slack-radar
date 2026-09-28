@@ -19,7 +19,7 @@ import {
 } from "./decide";
 import { CONFIG } from "./config";
 import { collectFeedback } from "./feedback";
-import { joinConfiguredChannels } from "./join";
+import { describeAutojoin, joinConfiguredChannels } from "./join";
 import { judgeDiscussion } from "./judge";
 import { describeJudge } from "./model";
 import { deliverRealtime, markItemNotified, withinWorkingHours } from "./notify";
@@ -314,6 +314,7 @@ export async function runSweep(): Promise<SweepStats> {
 
   // Before anything else: a channel the bot is not in produces no messages, so
   // every later stage would run perfectly over nothing.
+  console.log(`[slack-radar] auto-join ${describeAutojoin()}`);
   const joins = await joinConfiguredChannels();
   if (joins.attempted) {
     console.log(

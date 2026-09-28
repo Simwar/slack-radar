@@ -41,6 +41,22 @@ const HINTS: Record<string, string> = {
   is_archived: "the channel is archived",
 };
 
+/**
+ * Log-safe status, printed every run next to the judge's and the scorer's.
+ *
+ * Printed even when the feature is off, on purpose. Auto-join exists to make
+ * onboarding less fiddly, and an onboarding feature that is silent when
+ * misconfigured is the worst kind: "nothing happened" reads identically to
+ * "nothing needed to happen", and someone waits for a join that was never
+ * going to come.
+ */
+export function describeAutojoin(): string {
+  const n = CONFIG.autojoinChannelIds().length;
+  return n
+    ? `${n} channel(s) configured`
+    : "DISABLED (RADAR_AUTOJOIN_CHANNEL_IDS is empty) — the bot must be invited by hand";
+}
+
 export interface JoinStats {
   attempted: number;
   joined: number;
