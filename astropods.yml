@@ -122,9 +122,10 @@ inputs:
     default: "America/New_York"
     description: "Timezone for the instant-DM window (weekdays 09:00-18:00 local). Anything outside it waits for the next digest."
 
-# Scheduled jobs inherit neither the agent's Slack token nor its Postgres
-# secrets, so both are repeated per job. The Postgres three are a fallback
-# only: the code prefers POSTGRES_URL, which does reach these containers.
+# Scheduled jobs do not inherit the agent's Slack token, so it is repeated per
+# job. Postgres credentials DO reach them, via secretKeyRef from the knowledge
+# store — but only on the cron path; `ast agent trigger` is missing them
+# (astropods/astro#2902).
 ingestion:
   # Score ripe discussions and DM anything urgent.
   discussion_sweep:
@@ -139,8 +140,13 @@ ingestion:
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can DM leads and read their reactions. Same value as the agent's."
+      # secret: true is load-bearing, not a privacy claim. A non-secret
+      # ingestion input's VALUE never reaches the container — the platform only
+      # copies a variable into the mounted Secret when it is marked secret, so
+      # a plain string input silently arrives empty.
       - name: RADAR_AUTOJOIN_CHANNEL_IDS
         datatype: string
+        secret: true
         optional: true
         default: ""
         description: >-
@@ -149,19 +155,6 @@ ingestion:
           channel the sidecar forwards but the bot is not in produces nothing,
           and so does the reverse. Needs the channels:join scope, and works for
           public channels only.
-      - name: POSTGRES_USER
-        datatype: string
-        optional: true
-        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
-      - name: POSTGRES_PASSWORD
-        datatype: string
-        secret: true
-        optional: true
-        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
-      - name: POSTGRES_DB
-        datatype: string
-        optional: true
-        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
       # Everything else is hardcoded in scheduler/src/config.ts, with the table
       # in README.md. Each constant still reads its env var first, so
       # re-exposing one is uncommenting a stub here — no code deploy.
@@ -191,18 +184,5 @@ ingestion:
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can send digest DMs. Same value as the sweep's."
-      - name: POSTGRES_USER
-        datatype: string
-        optional: true
-        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
-      - name: POSTGRES_PASSWORD
-        datatype: string
-        secret: true
-        optional: true
-        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
-      - name: POSTGRES_DB
-        datatype: string
-        optional: true
-        description: "Fallback if POSTGRES_URL does not reach this job. Same value the agent container has."
       # This job has no working-hours gate — the cron IS the schedule. Keep it
       # inside working hours; DIGEST_MAX_ITEMS lives in config.ts.

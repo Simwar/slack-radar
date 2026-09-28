@@ -25,12 +25,11 @@ import type {
  * `ast project` gives ingestion containers the full set — which is exactly how
  * it reached a deploy.
  *
- * Three sources, in order:
- *   1. the individual POSTGRES_* vars, when USER is genuinely present;
- *   2. POSTGRES_URL, which the platform injects as an ordinary connection var
- *      rather than a secret, so it survives the split;
- *   3. neither — let it fail, but say what is missing and what to do, instead
- *      of leaving a driver-level error nobody can act on.
+ * Credentials arrive by secretKeyRef from the knowledge store and DO reach a
+ * cron-triggered job. They do not reach one started by `ast agent trigger`,
+ * which builds its Job without them (astropods/astro#2902). POSTGRES_URL is
+ * agent-only, so it is a fallback that has never yet fired; it costs a branch
+ * and would save a deploy if that changes.
  *
  * Read once at module load: these do not change under a running process, and
  * two jobs import this file.
