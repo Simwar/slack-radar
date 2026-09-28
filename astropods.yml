@@ -136,7 +136,7 @@ ingestion:
     trigger:
       type: schedule
     inputs:
-      - name: RADAR_SLACK_BOT_TOKEN
+      - name: RADAR-SLACK-BOT-TOKEN
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can DM leads and read their reactions. Same value as the agent's."
