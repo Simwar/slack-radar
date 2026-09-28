@@ -32,7 +32,6 @@ describe("eligibleTeams", () => {
     expect(eligibleTeams([team({ home_channel_ids: ["C_HOME"] })], "C_HOME", [])).toHaveLength(0);
   });
 
-  // The judge cannot see this: transcripts are anonymised before they are sent.
   test("drops a team whose lead is active in the thread", () => {
     expect(eligibleTeams([team()], "C_OTHER", ["U_A", "U_LEAD"])).toHaveLength(0);
   });
@@ -56,7 +55,6 @@ describe("shortlistTeams", () => {
     expect(got[0]!.score).toBe(1.5);
   });
 
-  // Team names are ordinary words; a bare mention must not reach the judge.
   test("a bare team-name mention scores below the bar", () => {
     expect(shortlistTeams("nice work platform", "C1", [], [team()], OPTS)).toHaveLength(0);
   });
@@ -105,8 +103,6 @@ describe("recentAuthors", () => {
     expect(recentAuthors(msgs(["U_LEAD", "U_A", "U_B", "U_C"]), 2)).toEqual(["U_B", "U_C"]);
   });
 
-  // The point of the change: a lead who spoke early and has not since is told
-  // about a thread that moved on without them.
   test("a lead who only spoke early is not engaged", () => {
     const engaged = recentAuthors(msgs(["U_LEAD", "U_A", "U_B", "U_C"]), 2);
     expect(eligibleTeams([team()], "C_OTHER", engaged)).toHaveLength(1);

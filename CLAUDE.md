@@ -25,6 +25,12 @@ will otherwise bite.
 
 ## Rules of thumb
 
+- **Comment only what the code cannot say.** No restating the line below, no
+  history of how a bug was found, no rationale that belongs in the commit
+  message or a changelog entry. Default to no comment; add one for a
+  non-obvious invariant, a cross-file constraint, or a footgun that is
+  expensive to trip. The same goes for PR descriptions and `astropods.yml`.
+
 - Anything that runs per-message belongs in the agent container and must not
   call a model. Anything that needs judgement belongs in the sweep.
 - Before adding a notification path, check it cannot double-send: the
