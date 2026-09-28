@@ -2,7 +2,7 @@
 
 A PM-style agent for Slack channel sprawl. It watches every channel it is
 invited to, works out which discussions a given team lead would want to know
-about, and tells them — urgently if it cannot wait, otherwise in a twice-daily
+about, and tells them — urgently if it cannot wait, otherwise in a batched
 digest. It gets quieter where it is wrong, based on reactions.
 
 ## Quick start
@@ -100,8 +100,9 @@ money, and only gate 7 decides whether you are interrupted.
 
 ### Timing
 
-**15 minutes is the floor for everything**, set by the `*/15` sweep cron — not by
-any threshold. Nothing is judged sooner, however urgent.
+**The sweep cron is the floor for everything** — not any threshold. Nothing is
+judged sooner, however urgent. There is no default: you set both schedules at
+deploy time, and the table below assumes the suggested `*/15`.
 
 | Thread shape | First judged |
 |---|---|

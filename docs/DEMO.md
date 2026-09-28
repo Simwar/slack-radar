@@ -186,7 +186,7 @@ DM the bot:
 
 Trigger `lead_digest` manually rather than waiting for 09:00.
 
-> "Only genuinely urgent things interrupt. Everything else arrives twice a day
+> "Only genuinely urgent things interrupt. Everything else arrives in a batch
 > in one message, not five pings."
 
 ### Close
@@ -241,11 +241,11 @@ RADAR_SLACK_BOT_TOKEN=xoxb-… SLACK_WORKSPACE_DOMAIN=… scripts/deploy.sh
 The code also falls back to `SLACK_BOT_TOKEN` if that is absent, so a
 half-configured deploy still delivers — but set it explicitly.
 
-**Choose the cron carefully at first deploy.** Schedule crons are entered at
-fresh `ast deploy` time and *preserved across redeploys*, so changing one later
-means delete-and-redeploy. `*/15` is right for real use. If you want faster
-feedback while demoing, `*/5` is a reasonable compromise; do not use `*/1` in a
-deployed environment.
+**Set the crons at deploy.** There are no defaults: neither job runs until you
+give it a schedule. They are preserved across redeploys, and changing one later
+needs no delete — `ast agent redeploy --schedule <job>='<cron>'`. `*/15` is
+right for real use; `*/5` is a reasonable compromise while demoing. Do not use
+`*/1` in a deployed environment.
 
 **Demo timings in prod.** They compress the ripeness thresholds but cannot beat
 the cron, so on `*/15` you still wait up to 15 minutes. Unset them immediately

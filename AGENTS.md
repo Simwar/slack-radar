@@ -52,8 +52,8 @@ slack-radar/
 | `agent` | `agent` | Always-on messaging surface and the entire ingest path. Runs DDL + `TEAMS_CONFIG` bootstrap at boot. Serves `/health`. |
 | `inputs` | model keys | `ANTHROPIC_API_KEY` / `BASETEN_API_KEY` as **top-level** inputs, so one value reaches every container. There is deliberately no `models:` provider entry — see below. |
 | `knowledge` | `slackradardb` | Managed `postgres`. Injects `POSTGRES_*` into all containers. |
-| `ingestion` | `discussion_sweep` | Schedule (*/15). Scoring and urgent delivery. |
-| `ingestion` | `lead_digest` | Schedule (09:00, 14:00 weekdays). Rollup delivery. |
+| `ingestion` | `discussion_sweep` | Schedule, set at deploy (suggested `*/15`). Scoring and urgent delivery. |
+| `ingestion` | `lead_digest` | Schedule, set at deploy (suggested `0 9,14 * * 1-5`). Rollup delivery. |
 
 ## The one idea that makes this work
 

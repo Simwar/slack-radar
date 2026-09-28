@@ -1,5 +1,5 @@
 ---
-description: Watches the Slack channels it is invited to, works out which discussions a team lead would want to know about, and DMs them - urgently if it cannot wait, otherwise in a twice-daily digest.
+description: Watches the Slack channels it is invited to, works out which discussions a team lead would want to know about, and DMs them - urgently if it cannot wait, otherwise in a digest.
 tags:
   - slack
   - notifications
@@ -22,7 +22,7 @@ Records each message and folds it into a *discussion* (a thread, or a top-level
 message and whatever follows it). No model runs on this path — ingest is an
 INSERT, which is what makes watching dozens of channels affordable.
 
-**Every 15 minutes (`discussion_sweep`):**
+**On each `discussion_sweep` run:**
 
 1. **Picks ripe discussions** — a thread that has been quiet for ~20 minutes, or
    has crossed 8 messages while still live. Never one that just started.
@@ -36,10 +36,21 @@ INSERT, which is what makes watching dozens of channels affordable.
    only); everything else waits for the digest. A (discussion, team) pair is
    only ever raised once.
 
-**At 09:00 and 14:00 on weekdays (`lead_digest`):**
+**On each `lead_digest` run:**
 
 Sends each lead one grouped message with everything pending, highest confidence
 first, each with a link straight to the thread.
+
+**Neither job has a default schedule.** Both are entered at deploy time and the
+agent does nothing until they are. The cadences below are what this design
+assumes, not what you get:
+
+| Job | Suggested | Why |
+|---|---|---|
+| `discussion_sweep` | `*/15 * * * *` | The real latency floor — nothing is judged sooner than the next tick. `*/5` if 15 minutes is too slow for incidents, at 3x the pod churn. |
+| `lead_digest` | `0 9,14 * * 1-5` | Start of morning and after lunch. **Keep it inside working hours:** this job has no working-hours gate of its own, so an hourly cron DMs every lead at 03:00. |
+
+`ast agent redeploy --schedule <job>='<cron>'` sets or changes them.
 
 **Always:**
 
@@ -81,8 +92,8 @@ timings and a "why didn't I get pinged" checklist are in `README.md`.
 | Container | Trigger | Role |
 |---|---|---|
 | `agent` | always-on | Records every observed message (no model call). Answers leads on @mention/DM. Runs schema DDL and bootstraps the registry from `TEAMS_CONFIG` if it is empty. |
-| `discussion_sweep` | schedule (*/15) | Ripeness, prefilter, judge, raise matches, urgent DMs, feedback collection, retention purge. |
-| `lead_digest` | schedule (09:00, 14:00 weekdays) | Per-lead rollup of everything pending. |
+| `discussion_sweep` | schedule (set at deploy) | Ripeness, prefilter, judge, raise matches, urgent DMs, feedback collection, retention purge. |
+| `lead_digest` | schedule (set at deploy) | Per-lead rollup of everything pending. |
 
 ## Configuration
 
