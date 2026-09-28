@@ -11,7 +11,7 @@ import { WebClient } from "@slack/web-api";
 // (same xoxb- value) means a half-configured deploy still delivers.
 //
 // The reliable way to set it explicitly is a deploy var, not configure:
-//   RADAR_SLACK_BOT_TOKEN=xoxb-… scripts/deploy.sh
+//   ast agent redeploy --id <id> --adapter slack --var RADAR_SLACK_BOT_TOKEN=xoxb-…
 const token = process.env.RADAR_SLACK_BOT_TOKEN || process.env.SLACK_BOT_TOKEN;
 if (!token) {
   console.error(

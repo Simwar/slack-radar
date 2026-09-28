@@ -111,10 +111,10 @@ distinguishable.
 
 **Workaround used**
 
-Pass it as a deploy var, which `scripts/deploy.sh` does:
+Pass it as a deploy var:
 
 ```bash
-RADAR_SLACK_BOT_TOKEN=xoxb-… scripts/deploy.sh
+ast agent redeploy --id <id> --adapter slack --var RADAR_SLACK_BOT_TOKEN=xoxb-…
 ```
 
 And in code, fall back to the adapter's token so a half-configured deploy still

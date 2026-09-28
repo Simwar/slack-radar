@@ -50,7 +50,9 @@ assumes, not what you get:
 | `discussion_sweep` | `*/15 * * * *` | The real latency floor — nothing is judged sooner than the next tick. `*/5` if 15 minutes is too slow for incidents, at 3x the pod churn. |
 | `lead_digest` | `0 9,14 * * 1-5` | Start of morning and after lunch. **Keep it inside working hours:** this job has no working-hours gate of its own, so an hourly cron DMs every lead at 03:00. |
 
-`ast agent redeploy --schedule <job>='<cron>'` sets or changes them.
+`ast agent redeploy --id <id> --adapter slack --schedule <job>='<cron>'`
+sets or changes them. `--adapter slack` is required every time: it defaults to
+`web`, and omitting it drops Slack ingestion silently.
 
 **Always:**
 
@@ -165,9 +167,8 @@ OAuth scopes: `channels:history`, `groups:history` (private channels),
 `chat:write`, `im:write`, `reactions:read`, `users:read`.
 
 Two separate requirements per channel, and missing either is silent: invite the
-bot to the channel, **and** list the channel ID in the deploy's
-`observe_channel_ids` (`scripts/deploy.sh` builds this from
-`WATCHED_CHANNEL_IDS`).
+bot to the channel, **and** list the channel ID in the deploy page's **Observe
+Channel IDs**.
 
 Note the messaging sidecar drops any message carrying a Slack `bot_id`, so
 alerts posted by other apps are invisible; a discussion started by a bot alert is

@@ -22,7 +22,7 @@ Then:
 2. **List those channel IDs** in the deploy page's Slack section, under
    **Observe Channel IDs**. Leave **Allowed Channel IDs** blank. For local dev
    use `dev.interfaces.messaging.slack.observe_channel_ids` in `astropods.yml`,
-   or `WATCHED_CHANNEL_IDS="C1,C2,C3" scripts/deploy.sh`.
+   Deployed, it is the deploy page's **Observe Channel IDs** field.
 3. **Set up at least one team**, either by pasting a registry into the
    `TEAMS_CONFIG` input at deploy time (see below) or simply by DMing the agent:
    *"set up a team for platform, I am the lead, we own the API gateway and rate
@@ -76,8 +76,9 @@ ast blueprint push slack-radar
 ast blueprint deploy slack-radar
 ```
 
-Redeploys go through `scripts/deploy.sh`, never `ast agent redeploy` directly —
-the script pins `--adapter slack` and rebuilds the watched-channel list.
+Redeploying from the CLI needs `--adapter slack` explicitly: it defaults to
+`web`, and omitting it drops Slack ingestion silently — the agent reports
+Running and never sees a message.
 
 ## How it decides, and when
 

@@ -402,9 +402,10 @@ together:
   real `/v1/decisions` call from that container. The `impact …` line the sweep
   prints every run is the standing check, so this does not have to be
   rediscovered.
-- **Never `ast agent redeploy` directly** — use `scripts/deploy.sh`, which pins
-  `--adapter slack` (the CLI defaults to `web` and silently drops Slack
-  ingestion) and rebuilds `SLACK_CONFIG` from `WATCHED_CHANNEL_IDS`.
+- **Always pass `--adapter slack` when redeploying from the CLI.** It defaults
+  to `web`, and a deploy that omits it drops Slack ingestion silently: the agent
+  reports Running, never sees a message, and the sweep finds nothing to score.
+  Deploying from the console does not have this problem.
 - **Never set an allowlist.** A non-empty `allowed_channel_ids` makes the
   sidecar post "This app has not been enabled for this channel or user" into
   every channel it rejects, before the agent runs. We pass `observe_channel_ids`
@@ -417,7 +418,8 @@ together:
   required, which was true of ast 0.17.1 and is not of 0.22.1 — the same
   staleness as `docs/CLI-ISSUES.md` #1.)
 
-      scripts/deploy.sh --schedule lead_digest='0 9,14 * * 1-5'
+      ast agent redeploy --id <id> --adapter slack \
+        --schedule lead_digest='0 9,14 * * 1-5'
 
   That matters more than it sounds: the digest path has **no working-hours
   gate**, only per-lead pause, so a digest cron of `*/30` or `0 * * * *` DMs
@@ -431,15 +433,19 @@ missing either one produces a bot that looks healthy and sees nothing:
 
 1. **Invite the bot to the channel** in Slack (`/invite @slack-radar`). Slack sends
    nothing for a channel the app is not a member of.
-2. **Add the channel ID to `observe_channel_ids`** in `astropods.yml` under
-   `dev.interfaces.messaging.slack`, then run `scripts/deploy.sh`.
+2. **Add the channel ID to the observed list.** Deployed, that is the deploy
+   page's **Observe Channel IDs**; locally it is `observe_channel_ids` under
+   `dev.interfaces.messaging.slack` in `astropods.yml`.
 
-That list in `astropods.yml` is the single source of truth. `scripts/deploy.sh`
-parses it and rebuilds `SLACK_CONFIG` for the deployed agent, so local dev and
-production cannot disagree. (It used to be written out twice — once in the spec
-for dev, once as a default in the script — and nothing would have told you they
-had drifted.) `WATCHED_CHANNEL_IDS=C1,C2 scripts/deploy.sh` overrides for a
-one-off deploy; an empty list aborts rather than deploying a blind agent.
+The two lists are separate and neither is derived from the other, so a channel
+added for local dev is not watched in production until it is added there too.
+From the CLI:
+
+    ast agent redeploy --id <id> --adapter slack \
+      --var 'SLACK_CONFIG={"observe_channel_ids":["C1","C2"]}'
+
+That overwrites whatever is on the deploy page, so send the whole list, not the
+addition.
 
 ### Why `observe_channel_ids` is the whole ingest surface
 
