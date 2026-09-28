@@ -24,7 +24,13 @@ import { describeJudge } from "./model";
 import { deliverRealtime, markItemNotified, withinWorkingHours } from "./notify";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { getTracer } from "./observability";
-import { eligibleTeams, ineligibleBecause, shortlistTeams, type Candidate } from "./prefilter";
+import {
+  eligibleTeams,
+  ineligibleBecause,
+  recentAuthors,
+  shortlistTeams,
+  type Candidate,
+} from "./prefilter";
 import type { DiscussionRow, TeamRow } from "./types";
 
 
@@ -73,6 +79,7 @@ function withScoredOwner(
   impact: ImpactScores,
   teams: TeamRow[],
   discussion: DiscussionRow,
+  engaged: string[],
 ): Candidate[] {
   if (impact.owner === NO_OWNER) return lexical;
   if (impact.owner_confidence < CONFIG.jevOwnerMinProb()) return lexical;
@@ -80,7 +87,7 @@ function withScoredOwner(
 
   // Re-check eligibility rather than trusting the scorer's menu: the registry
   // is edited live over Slack and could have moved under this run.
-  const team = eligibleTeams(teams, discussion.channel_id, discussion.participants).find(
+  const team = eligibleTeams(teams, discussion.channel_id, engaged).find(
     (t) => t.key === impact.owner,
   );
   if (!team) return lexical;
@@ -124,14 +131,17 @@ async function processDiscussion(
         // Say why when nothing can be scored. Without this the run reads as
         // "the radar did nothing" rather than "the radar deliberately did
         // nothing, and here is the rule".
-        if (!eligibleTeams(teams, discussion.channel_id, discussion.participants).length) {
+        // Recent authors, not every participant: see recentAuthors.
+        const engaged = recentAuthors(messages, CONFIG.leadEngagedMessages());
+
+        if (!eligibleTeams(teams, discussion.channel_id, engaged).length) {
           await markScored(discussion.id, discussion.message_count);
           span.setAttribute("discussion.outcome", "no_eligible_teams");
           console.log(
             `[slack-radar] discussion ${discussion.id} in ${
               discussion.channel_name ? `#${discussion.channel_name}` : discussion.channel_id
             }: no eligible teams — ${teams
-              .map((t) => `${t.key}: ${ineligibleBecause(t, discussion.channel_id, discussion.participants)}`)
+              .map((t) => `${t.key}: ${ineligibleBecause(t, discussion.channel_id, engaged)}`)
               .join("; ")}`,
           );
           return;
@@ -140,7 +150,7 @@ async function processDiscussion(
         const lexical = shortlistTeams(
           messages.map((m) => m.text).join("\n"),
           discussion.channel_id,
-          discussion.participants,
+          engaged,
           teams,
           { minScore: CONFIG.prefilterMinScore(), maxTeams: CONFIG.prefilterMaxTeams() },
         );
@@ -153,7 +163,7 @@ async function processDiscussion(
         // null means the gateway is not configured or the call failed. That is
         // the fall-back-to-lexical path, and it must stay silent-safe: never
         // treat a missing score as a reason to drop anything.
-        const impact = await scoreImpact(discussion, messages, teams);
+        const impact = await scoreImpact(discussion, messages, teams, engaged);
         let candidates = lexical;
 
         if (impact) {
@@ -169,7 +179,7 @@ async function processDiscussion(
             span.setAttribute("radar.jev.drop_reason", verdict.reason);
             return;
           }
-          candidates = withScoredOwner(lexical, impact, teams, discussion);
+          candidates = withScoredOwner(lexical, impact, teams, discussion, engaged);
         }
 
         span.setAttribute("discussion.candidates", candidates.length);
