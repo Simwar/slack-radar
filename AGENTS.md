@@ -411,8 +411,18 @@ together:
   only and gate in `agent/index.ts`.
 - **Bot-authored messages never arrive.** The sidecar filters on `bot_id`.
 - **Crons are not in `astropods.yml`** for deployed jobs (`dev.schedules` is
-  local only). They are entered at fresh `ast deploy` and preserved on redeploy,
-  so changing a cadence needs a delete + fresh deploy.
+  local only). They are entered at fresh `ast deploy` and preserved on redeploy.
+  Changing one does **not** need a delete: `ast agent redeploy` takes
+  `--schedule <job>=<cron>`, repeatable. (This used to say a delete was
+  required, which was true of ast 0.17.1 and is not of 0.22.1 — the same
+  staleness as `docs/CLI-ISSUES.md` #1.)
+
+      scripts/deploy.sh --schedule lead_digest='0 9,14 * * 1-5'
+
+  That matters more than it sounds: the digest path has **no working-hours
+  gate**, only per-lead pause, so a digest cron of `*/30` or `0 * * * *` DMs
+  every lead around the clock. Only the realtime path respects
+  `RADAR_WINDOW_*`.
 
 ## Adding a watched channel
 
