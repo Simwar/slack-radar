@@ -243,6 +243,27 @@ ingestion:
           channels:join scope; public channels only, private ones still need one
           manual invite each. scripts/deploy.sh sets this from
           WATCHED_CHANNEL_IDS so one variable drives both halves.
+      # Escape hatch for the credentials split below. The platform injects the
+      # five POSTGRES_* values into the AGENT container via secrets, and
+      # secrets do not reach ingestion containers — so a deployed job connects
+      # to the right server and is rejected with 28000 (no user name in the
+      # startup packet) before it runs a single query. The code prefers
+      # POSTGRES_URL, which is injected as an ordinary connection var and
+      # survives the split; set these three only if that is not enough.
+      # Read them off the agent container, they are platform-generated.
+      - name: POSTGRES_USER
+        datatype: string
+        optional: true
+        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+      - name: POSTGRES_PASSWORD
+        datatype: string
+        secret: true
+        optional: true
+        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+      - name: POSTGRES_DB
+        datatype: string
+        optional: true
+        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
       #
       # Everything else the sweep does is tuned in scheduler/src/config.ts, NOT
       # here. Ripeness thresholds, spend ceilings, prefilter strictness, the
@@ -286,4 +307,25 @@ ingestion:
         description: >-
           Slack bot token (xoxb-...) so this job can send digest DMs. Same value
           as the sweep's.
+      # Escape hatch for the credentials split below. The platform injects the
+      # five POSTGRES_* values into the AGENT container via secrets, and
+      # secrets do not reach ingestion containers — so a deployed job connects
+      # to the right server and is rejected with 28000 (no user name in the
+      # startup packet) before it runs a single query. The code prefers
+      # POSTGRES_URL, which is injected as an ordinary connection var and
+      # survives the split; set these three only if that is not enough.
+      # Read them off the agent container, they are platform-generated.
+      - name: POSTGRES_USER
+        datatype: string
+        optional: true
+        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+      - name: POSTGRES_PASSWORD
+        datatype: string
+        secret: true
+        optional: true
+        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
+      - name: POSTGRES_DB
+        datatype: string
+        optional: true
+        description: "Only needed if POSTGRES_URL does not reach this job. Same value the agent container has."
       # DIGEST_MAX_ITEMS (default 12) lives in scheduler/src/config.ts.

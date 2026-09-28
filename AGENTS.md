@@ -372,6 +372,25 @@ together:
   (`RADAR_SLACK_BOT_TOKEN` — `SLACK_BOT_TOKEN` is claimed by the messaging
   adapter and routed to the sidecar) while the model keys are top-level inputs.
   Anything both containers need should be a top-level input.
+- **Postgres credentials hit that same split, and it cost a production
+  deploy.** `ast docs` is explicit: the platform "injects all five credentials
+  into the **agent container** via secrets" (`POSTGRES_HOST`, `PORT`, `USER`,
+  `PASSWORD`, `DB`). `HOST` and `PORT` are ordinary connection vars and do
+  reach ingestion; `USER`, `PASSWORD` and `DB` are secrets and do not. The
+  result is the worst shape of failure: the job connects to the correct server
+  and is rejected at the startup packet — `28000: no PostgreSQL user name
+  specified in startup packet` — inside `assertConnection()`, before any work.
+  Every sweep and every digest in the deployment dies there.
+
+  **Local dev does not reproduce it.** `ast project` gives ingestion containers
+  the full set, so the sweep works perfectly on a laptop and has never once
+  connected in production. That is precisely how it shipped.
+
+  `scheduler/src/db.ts` now prefers the individual vars, falls back to
+  `POSTGRES_URL` (an ordinary connection var, so it survives the split), and
+  otherwise fails with a message naming the missing variables. Both jobs print
+  `[slack-radar] db …` before connecting. `POSTGRES_USER`/`PASSWORD`/`DB` exist
+  as optional per-job inputs in `astropods.yml` as a last resort.
 - **The AI gateway is an exception to that, and it was verified rather than
   assumed.** `ASTRO_GATEWAY_URL` and `ASTRO_GATEWAY_API_KEY` **do** reach
   ingestion containers even though they come from a `models: { provider:

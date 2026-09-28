@@ -1,4 +1,4 @@
-import { assertConnection, closePool } from "./db";
+import { assertConnection, closePool, describeDb } from "./db";
 import { runDigest } from "./digest";
 import { getTracer, shutdownTracing, startTracing } from "./observability";
 
@@ -8,6 +8,7 @@ async function main() {
   try {
     await getTracer().startActiveSpan("lead_digest", async (span) => {
       try {
+        console.log(`[slack-radar] db ${describeDb()}`);
         await assertConnection();
         const stats = await runDigest();
         span.setAttribute("radar.leads_total", stats.leadsTotal);

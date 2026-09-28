@@ -1,5 +1,5 @@
 import type { ImpactScores } from "./decide";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import type {
   DiscussionRow,
   JudgedMatch,
@@ -8,14 +8,68 @@ import type {
   TeamRow,
 } from "./types";
 
-const pool = new Pool({
-  host: process.env.POSTGRES_HOST,
-  port: process.env.POSTGRES_PORT ? Number(process.env.POSTGRES_PORT) : 5432,
-  user: process.env.POSTGRES_USER,
-  password: process.env.POSTGRES_PASSWORD,
-  database: process.env.POSTGRES_DB,
-  connectionTimeoutMillis: 3000,
-});
+/**
+ * Postgres for the INGESTION containers, which is a different problem from
+ * Postgres for the agent.
+ *
+ * The platform injects the five POSTGRES_* credentials into the AGENT
+ * container via secrets (`ast docs`, knowledge providers). Secrets do not
+ * reach ingestion containers — the same split that already forces
+ * RADAR_SLACK_BOT_TOKEN to be a per-job input. So a deployed sweep sees
+ * POSTGRES_HOST and POSTGRES_PORT but no USER, PASSWORD or DB, connects to the
+ * right server, and is rejected before it can send a query.
+ *
+ * Observed in production as `28000: no PostgreSQL user name specified in
+ * startup packet` on every run, with the job dying inside assertConnection()
+ * before one line of work. Local dev does not reproduce it, because
+ * `ast project` gives ingestion containers the full set — which is exactly how
+ * it reached a deploy.
+ *
+ * Three sources, in order:
+ *   1. the individual POSTGRES_* vars, when USER is genuinely present;
+ *   2. POSTGRES_URL, which the platform injects as an ordinary connection var
+ *      rather than a secret, so it survives the split;
+ *   3. neither — let it fail, but say what is missing and what to do, instead
+ *      of leaving a driver-level error nobody can act on.
+ *
+ * Read once at module load: these do not change under a running process, and
+ * two jobs import this file.
+ */
+const PG_USER = process.env.POSTGRES_USER || "";
+const PG_URL = process.env.POSTGRES_URL || "";
+
+function poolConfig(): PoolConfig {
+  const common: PoolConfig = { connectionTimeoutMillis: 3000 };
+  if (PG_USER) {
+    return {
+      ...common,
+      host: process.env.POSTGRES_HOST,
+      port: process.env.POSTGRES_PORT ? Number(process.env.POSTGRES_PORT) : 5432,
+      user: PG_USER,
+      password: process.env.POSTGRES_PASSWORD,
+      database: process.env.POSTGRES_DB,
+    };
+  }
+  if (PG_URL) return { ...common, connectionString: PG_URL };
+  return common;
+}
+
+/** Log-safe. Never returns the password or the URL (which embeds it). */
+export function describeDb(): string {
+  if (PG_USER) {
+    return `host=${process.env.POSTGRES_HOST ?? "?"} db=${process.env.POSTGRES_DB ?? "?"} user=set`;
+  }
+  if (PG_URL) {
+    return "via POSTGRES_URL (POSTGRES_USER absent — secrets do not reach ingestion containers)";
+  }
+  return (
+    "MISCONFIGURED: neither POSTGRES_USER nor POSTGRES_URL is set in this container. " +
+    "Postgres secrets are injected into the agent container only; set POSTGRES_USER, " +
+    "POSTGRES_PASSWORD and POSTGRES_DB as inputs on this ingestion job"
+  );
+}
+
+const pool = new Pool(poolConfig());
 
 pool.on("error", (err) => console.error("[slack-radar] idle pg client error:", err.message));
 
@@ -37,6 +91,12 @@ export async function assertConnection(): Promise<void> {
       await pool.query("SELECT 1");
       return;
     } catch (err) {
+      // 28000/28P01 is the credentials split above, not a blip. Retrying it
+      // six times just delays an error that will never clear on its own.
+      const code = (err as { code?: string })?.code;
+      if (code === "28000" || code === "28P01") {
+        console.error(`[slack-radar] db auth rejected — ${describeDb()}`);
+      }
       if (!isTransientDbError(err) || i >= attempts) throw err;
       const delay = Math.min(500 * 2 ** (i - 1), 8000);
       console.warn(
