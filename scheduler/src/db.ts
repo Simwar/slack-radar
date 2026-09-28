@@ -1,4 +1,5 @@
-import { Pool } from "pg";
+import type { ImpactScores } from "./decide";
+import { Pool, type PoolConfig } from "pg";
 import type {
   DiscussionRow,
   JudgedMatch,
@@ -7,14 +8,82 @@ import type {
   TeamRow,
 } from "./types";
 
-const pool = new Pool({
-  host: process.env.POSTGRES_HOST,
-  port: process.env.POSTGRES_PORT ? Number(process.env.POSTGRES_PORT) : 5432,
-  user: process.env.POSTGRES_USER,
-  password: process.env.POSTGRES_PASSWORD,
-  database: process.env.POSTGRES_DB,
-  connectionTimeoutMillis: 3000,
-});
+/**
+ * Postgres for the INGESTION containers, which is a different problem from
+ * Postgres for the agent.
+ *
+ * The platform injects the five POSTGRES_* credentials into the AGENT
+ * container via secrets (`ast docs`, knowledge providers). Secrets do not
+ * reach ingestion containers — the same split that already forces
+ * RADAR_SLACK_BOT_TOKEN to be a per-job input. So a deployed sweep sees
+ * POSTGRES_HOST and POSTGRES_PORT but no USER, PASSWORD or DB, connects to the
+ * right server, and is rejected before it can send a query.
+ *
+ * Observed in production as `28000: no PostgreSQL user name specified in
+ * startup packet` on every run, with the job dying inside assertConnection()
+ * before one line of work. Local dev does not reproduce it, because
+ * `ast project` gives ingestion containers the full set — which is exactly how
+ * it reached a deploy.
+ *
+ * Credentials arrive by secretKeyRef from the knowledge store and DO reach a
+ * cron-triggered job. They do not reach one started by `ast agent trigger`,
+ * which builds its Job without them (astropods/astro#2902). POSTGRES_URL is
+ * agent-only, so it is a fallback that has never yet fired; it costs a branch
+ * and would save a deploy if that changes.
+ *
+ * Read once at module load: these do not change under a running process, and
+ * two jobs import this file.
+ */
+const PG_USER = process.env.POSTGRES_USER || "";
+const PG_URL = process.env.POSTGRES_URL || "";
+
+function poolConfig(): PoolConfig {
+  // host/port go on EVERY path. Leaving them off when the credentials are
+  // missing sends pg to its localhost default, so a credentials problem
+  // surfaces as ECONNREFUSED 127.0.0.1 and hides whether the real host was
+  // reachable at all. Ask how I know.
+  const common: PoolConfig = {
+    connectionTimeoutMillis: 3000,
+    host: process.env.POSTGRES_HOST,
+    port: process.env.POSTGRES_PORT ? Number(process.env.POSTGRES_PORT) : 5432,
+  };
+  if (PG_USER) {
+    return {
+      ...common,
+      user: PG_USER,
+      password: process.env.POSTGRES_PASSWORD,
+      database: process.env.POSTGRES_DB,
+    };
+  }
+  if (PG_URL) return { connectionTimeoutMillis: 3000, connectionString: PG_URL };
+  return common;
+}
+
+/** True when this container has no usable credentials, however the host looks. */
+export function dbMisconfigured(): boolean {
+  return !PG_USER && !PG_URL;
+}
+
+/** Log-safe. Never returns the password or the URL (which embeds it). */
+export function describeDb(): string {
+  if (PG_USER) {
+    return `host=${process.env.POSTGRES_HOST ?? "?"} db=${process.env.POSTGRES_DB ?? "?"} user=set`;
+  }
+  if (PG_URL) {
+    return "via POSTGRES_URL (POSTGRES_USER absent — secrets do not reach ingestion containers)";
+  }
+  // Report the host either way: it tells the next reader whether the
+  // non-secret connection vars reached this container even though the
+  // credentials did not, which is the whole shape of the problem.
+  const host = process.env.POSTGRES_HOST;
+  return (
+    `MISCONFIGURED: no POSTGRES_USER and no POSTGRES_URL (host=${host || "unset"}). ` +
+    "Postgres secrets reach the agent container only — set POSTGRES_USER, POSTGRES_PASSWORD " +
+    "and POSTGRES_DB as inputs on this ingestion job"
+  );
+}
+
+const pool = new Pool(poolConfig());
 
 pool.on("error", (err) => console.error("[slack-radar] idle pg client error:", err.message));
 
@@ -28,6 +97,10 @@ function isTransientDbError(err: unknown): boolean {
 }
 
 export async function assertConnection(): Promise<void> {
+  // No credentials is not a blip, and retrying it six times just buys a
+  // slower, less clear failure.
+  if (dbMisconfigured()) throw new Error(`[slack-radar] db ${describeDb()}`);
+
   // The managed Postgres is briefly unavailable during its own redeploys.
   // Retry that; fail fast on genuine misconfig (auth, bad db name).
   const attempts = 6;
@@ -36,6 +109,12 @@ export async function assertConnection(): Promise<void> {
       await pool.query("SELECT 1");
       return;
     } catch (err) {
+      // 28000/28P01 is the credentials split above, not a blip. Retrying it
+      // six times just delays an error that will never clear on its own.
+      const code = (err as { code?: string })?.code;
+      if (code === "28000" || code === "28P01") {
+        console.error(`[slack-radar] db auth rejected — ${describeDb()}`);
+      }
       if (!isTransientDbError(err) || i >= attempts) throw err;
       const delay = Math.min(500 * 2 ** (i - 1), 8000);
       console.warn(
@@ -155,13 +234,14 @@ export async function markScored(discussionId: string, messageCount: number): Pr
 export async function insertMatch(
   discussionId: string,
   m: JudgedMatch,
+  landed: string | null,
   suppression?: { reason: string },
 ): Promise<{ id: string } | null> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO discussion_matches
        (discussion_id, team_key, signal_type, confidence, urgency, headline, rationale,
-        suppressed, suppressed_reason)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        suppressed, suppressed_reason, landed)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (discussion_id, team_key) DO NOTHING
      RETURNING id::text`,
     [
@@ -174,6 +254,7 @@ export async function insertMatch(
       m.rationale,
       Boolean(suppression),
       suppression?.reason ?? null,
+      landed,
     ],
   );
   return rows[0] ?? null;
@@ -191,14 +272,37 @@ export async function insertDecline(
   discussionId: string,
   teamKey: string,
   reason: string,
+  landed: string | null,
 ): Promise<void> {
   await pool.query(
     `INSERT INTO discussion_matches
        (discussion_id, team_key, signal_type, confidence, urgency, headline, rationale,
-        suppressed, suppressed_reason)
-     VALUES ($1,$2,'declined',0,'normal','','',TRUE,$3)
+        suppressed, suppressed_reason, landed)
+     VALUES ($1,$2,'declined',0,'normal','','',TRUE,$3,$4)
      ON CONFLICT (discussion_id, team_key) DO NOTHING`,
-    [discussionId, teamKey, reason],
+    [discussionId, teamKey, reason, landed],
+  );
+}
+
+/**
+ * Record the impact scorer's answers for this pass, and what the sweep did.
+ *
+ * Written for every scored discussion, including ones dropped before any judge
+ * call. A drop means a lead is never told, which is the same class of decision
+ * as a suppressed match and needs the same paper trail — and it is what lets
+ * the drop thresholds in config.ts be re-derived from real traffic later:
+ *
+ *   SELECT last_impact_outcome, count(*) FROM discussions
+ *    WHERE last_impact IS NOT NULL GROUP BY 1;
+ */
+export async function recordImpact(
+  discussionId: string,
+  scores: ImpactScores | null,
+  outcome: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE discussions SET last_impact = $2::jsonb, last_impact_outcome = $3 WHERE id = $1`,
+    [discussionId, scores ? JSON.stringify(scores) : null, outcome],
   );
 }
 
@@ -232,7 +336,7 @@ export async function recordNotification(row: {
 export async function getPendingDigestMatches(): Promise<PendingDigestRow[]> {
   const { rows } = await pool.query<PendingDigestRow>(
     `SELECT m.id::text AS match_id, m.team_key, t.name AS team_name, t.lead_slack_ids,
-            m.signal_type, m.urgency, m.confidence, m.headline, m.rationale,
+            m.signal_type, m.urgency, m.confidence, m.headline, m.rationale, m.landed,
             d.channel_id, w.channel_name, d.root_ts, d.message_count
        FROM discussion_matches m
        JOIN teams t ON t.key = m.team_key

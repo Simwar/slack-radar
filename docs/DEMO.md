@@ -27,26 +27,31 @@ demo from a deployed environment where the cron genuinely runs.
 **This is a real argument for demoing from prod rather than locally:** deployed,
 the sweep is a real scheduled job and fires on its own.
 
-### 1. Turn on demo mode
+### 1. Set the demo timings
 
 Production timings make this undemoable: a lone message takes 15 minutes to
 reach a DM, and realtime delivery only happens on weekdays between 09:00 and
 18:00.
 
 ```bash
-DEMO_MODE=true          # quiet 10min→1min, burst 8→3, min-age 10min→0,
-                        # working-hours gate bypassed
+SWEEP_QUIET_MINUTES=1     # a lone message goes ripe in 1 min, not 10
+SWEEP_MIN_AGE_MINUTES=0   # no minimum age
+SWEEP_BURST_MESSAGES=3    # a 3-message thread is judged without waiting for quiet
+RADAR_WINDOW_DAYS=0-6     # rehearse on a weekend
+RADAR_WINDOW_START=00:00  # ...and at any hour
+RADAR_WINDOW_END=23:59
 ```
 
-Set it via `ast project configure`, and change the sweep cadence in
+Set them via `ast project configure`, and change the sweep cadence in
 `astropods.yml` under `dev.schedules` to run **every minute** (`* * * * *`)
 instead of every fifteen. The cron is the real latency floor — no env var moves
 it, so this step is not optional.
 
-Demo mode deliberately does **not** touch the prefilter, judge prompt or
-confidence thresholds. What the audience watches make decisions is the same code
-that runs in production. Resist the urge to lower `min_confidence` to guarantee
-a hit; if the demo needs that, the demo message is wrong, not the threshold.
+These are timing values only: none of them touches the prefilter, the judge
+prompt or the confidence thresholds. What the audience watches make decisions is
+the same code that runs in production. Resist the urge to lower `min_confidence`
+to guarantee a hit; if the demo needs that, the demo message is wrong, not the
+threshold.
 
 The sweep prints a loud warning every run while it is on. Turn it off afterwards.
 
@@ -96,7 +101,7 @@ tool description spells that out.
 ### 4. Pre-flight, two minutes before
 
 - [ ] Containers running, `ast project logs` streaming on a second screen
-- [ ] `DEMO_MODE IS ON` warning visible in the sweep logs
+- [ ] Sweep log shows the demo timings in effect, and the cron is `* * * * *`
 - [ ] Reset script run
 - [ ] Your own Slack DMs with the bot open and visible
 - [ ] A rehearsed message in each channel, ready to paste
@@ -128,8 +133,8 @@ In `#support-escalations`, as a human user:
 
 > the api gateway is down, anyone on it?
 
-Within about a minute a DM arrives: headline, one line of why, a link to the
-thread. **Click the link on screen** and land in the conversation.
+Within about a minute a DM arrives: headline, one line of why, a quoted line on
+where the thread got to, and a link to it. **Click the link on screen** and land in the conversation.
 
 > "I was not in that channel. I did not search for anything."
 
@@ -196,7 +201,7 @@ Trigger `lead_digest` manually rather than waiting for 09:00.
 
 | Symptom | Cause | Recovery |
 |---|---|---|
-| No DM after ~2 min | Cron still `*/15`, or `DEMO_MODE` off | Check the sweep log banner. Have a pre-flagged item and use `what did I miss` instead. |
+| No DM after ~2 min | Cron still `*/15`, or the timing vars unset | Check the sweep log. Have a pre-flagged item and use `what did I miss` instead. |
 | Nothing at all, ever | Channel not in `observe_channel_ids`, or bot not invited | Move to a channel you verified in rehearsal. |
 | Worked in rehearsal, not now | Match already raised for that thread | You skipped the reset. Post a *differently worded* message. |
 | Judge declines your message | Message too trivial | Expected, and worth saying so: "the bar is 'would you want to jump in', and it just decided no." |
@@ -210,13 +215,14 @@ fires every time.
 
 ## Afterwards
 
-```bash
-DEMO_MODE=false     # or unset
-```
+Unset every variable from step 1, and restore `discussion_sweep` to
+`*/15 * * * *`. Left in place, those timings judge half-formed threads, and
+`RADAR_WINDOW_DAYS=0-6` with a midnight-to-midnight window is how you end up
+DMing people at 03:00 on a Sunday — the exact behaviour the rest of the design
+exists to prevent.
 
-Restore `discussion_sweep` to `*/15 * * * *`. Left on, demo mode judges
-half-formed threads and DMs people at 03:00 — the exact behaviour the rest of
-the design exists to prevent.
+Unsetting is genuinely required: there is no flag to flip back, which is the
+trade for there being no second code path that can drift from production.
 
 ---
 
@@ -241,10 +247,10 @@ means delete-and-redeploy. `*/15` is right for real use. If you want faster
 feedback while demoing, `*/5` is a reasonable compromise; do not use `*/1` in a
 deployed environment.
 
-**Demo mode in prod.** `DEMO_MODE=true` compresses the thresholds but cannot
-beat the cron, so on `*/15` you still wait up to 15 minutes. Turn it off
-immediately afterwards — it also bypasses the working-hours gate, which is how
-you end up DMing people at 03:00.
+**Demo timings in prod.** They compress the ripeness thresholds but cannot beat
+the cron, so on `*/15` you still wait up to 15 minutes. Unset them immediately
+afterwards — `RADAR_WINDOW_DAYS` and the window hours are what stand between you
+and DMing people at 03:00.
 
 **No DB access is fine.** A fresh deploy gets a fresh database, so it starts
 clean. For repeat runs, post new messages rather than re-using threads, and
@@ -252,8 +258,8 @@ clear a pause by DMing "unmute me".
 
 ## Testing loop (not the demo)
 
-For tuning the judge rather than showing it off, the fastest cycle is demo mode
-plus the one-minute cron, posting variations and watching
+For tuning the judge rather than showing it off, the fastest cycle is the step-1
+timings plus the one-minute cron, posting variations and watching
 `radar.judge.outcome` on the `judge_discussion` span. `what did I miss` in a DM
 reads matches directly and ignores digest state, so it separates "the judge
 declined it" from "it was never ingested" — which is the ambiguity that wastes

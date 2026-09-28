@@ -7,3 +7,7 @@ dist/
 .ast/
 # state dir when running a locally built ast binary
 .ast-dev/
+
+# Local team registries. Real Slack IDs, and nothing operational belongs in a blueprint.
+teams.json
+teams.*.json

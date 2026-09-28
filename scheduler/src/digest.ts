@@ -20,6 +20,7 @@ function toItem(row: PendingDigestRow): DeliverableItem {
     urgency: row.urgency,
     headline: row.headline,
     rationale: row.rationale,
+    landed: row.landed,
     channelId: row.channel_id,
     channelName: row.channel_name,
     rootTs: row.root_ts,

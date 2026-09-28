@@ -126,17 +126,77 @@ curl https://inference.baseten.co/v1/models -H "Authorization: Bearer $BASETEN_A
 If you move from Model APIs to a **dedicated deployment**, the endpoint shape
 changes and `BASETEN_BASE_URL` is the knob — that is what it exists for.
 
+## The impact layer
+
+Between the lexical prefilter and the judge sits one call to the gateway's
+decision model (`jev-1-13-0`, `scheduler/src/decide.ts`). It exists because the
+prefilter is a **hard gate**: a discussion that matters but never uses a team's
+keywords scored 0 and returned before any model saw it, so no prompt change
+could ever rescue it.
+
+It is not a third backend. The decisions API returns typed answers only — a
+probability, an option, a level — and no free text, so every prose field a
+notification needs still comes from the judge. This layer decides *whether to
+spend a judge call*, and passes its numbers into the judge prompt as evidence.
+
+It runs on **every** ripe discussion, not only the ones the prefilter rejected,
+because it has to be able to reject as well as rescue — approval requests and CI
+chatter otherwise keep reaching the judge on a keyword hit.
+
+Three things to know before changing it:
+
+1. **The question wording is load-bearing, more than the thresholds are.** The
+   first draft asked "is this converging on a choice that will be acted on" and
+   scored *"anyone up for lunch? / I'm in"* at **0.85** — correctly, they were
+   deciding lunch. Scoping it to "a technical, product or process choice" took
+   the same thread to 0.01. An approval request likewise scored `unanswered`
+   0.73 on "can someone approve when free?" until the question excluded routine
+   review requests. Re-run the scenario sweep after any edit.
+2. **A noise type is never a drop reason on its own.** `JEV_NOISE_MAX_IMPACT`
+   guards it, because README scenario 8 says a CI alert with human replies is
+   legitimate. Measured: a clean build notification scores `customer_affecting`
+   0.04 and drops, an alert plus "customers can't pay" scores 0.98 and goes to
+   the judge.
+3. **Fail open, always.** `scoreImpact()` returns `null` on any error, timeout
+   or missing gateway, and the sweep carries on with the lexical result. A
+   scoring layer that swallowed every discussion when the gateway blipped would
+   look exactly like a quiet week.
+
+Every score is persisted to `discussions.last_impact` including for dropped
+discussions — a drop means a lead was never told, which is the same class of
+decision as a suppressed match and needs the same paper trail. It is also what
+makes the thresholds re-derivable from real traffic instead of from intuition.
+
+### What the judge no longer has to guess
+
+The prompt used to say "do not flag discussions where someone from the team is
+already clearly participating". The judge could never obey it — transcripts are
+anonymised to `person1`/`person2` before they are sent. That instruction is gone,
+and `eligibleTeams()` in `prefilter.ts` now removes any team whose lead is in
+`discussions.participants`. Free, exact, and it is the fix for leads seeing their
+own threads flagged back at them.
+
+The same reasoning is why the impact scorer is not asked about participation.
+Asked anyway, on an anonymised transcript, it answered **0.48** — a calibrated
+way of saying "you did not tell me". Do not ask a model what Postgres knows.
+
 ## Cost model
 
-The judge is the only recurring model spend. It runs once per discussion that
-(a) went ripe and (b) had at least one team clear the lexical prefilter. Three
-levers, in order of effect:
+There are two recurring model spends: one small decision call per ripe
+discussion, and one judge call per discussion that survives it. The judge is far
+the larger. It runs once per discussion that went ripe and then survived the
+impact gate with at least one candidate team — which since the impact layer can
+mean a team the prefilter never found. Four levers, in order of effect:
 
 1. `PREFILTER_MIN_SCORE` — raise it and fewer discussions reach the judge at
    all. This is free precision; it costs recall.
-2. `JUDGE_MODEL` — decouples the judge from the chat agent on whichever backend
+2. `JEV_IMPACT_FLOOR` / `JEV_NOISE_MIN_CONFIDENCE` — raise these and more
+   discussions are dropped before the judge. Not free (the decision call still
+   happens) but it is the lever that cuts judge calls without costing the recall
+   that `PREFILTER_MIN_SCORE` does.
+3. `JUDGE_MODEL` — decouples the judge from the chat agent on whichever backend
    is active, in either direction.
-3. Switch to Baseten and pick a Flash/Fast tier or `openai/gpt-oss-120b`. Check
+4. Switch to Baseten and pick a Flash/Fast tier or `openai/gpt-oss-120b`. Check
    current rates with `/v1/models` rather than trusting a figure written here —
    the catalogue moves.
 
@@ -312,6 +372,36 @@ together:
   (`RADAR_SLACK_BOT_TOKEN` — `SLACK_BOT_TOKEN` is claimed by the messaging
   adapter and routed to the sidecar) while the model keys are top-level inputs.
   Anything both containers need should be a top-level input.
+- **Postgres credentials hit that same split, and it cost a production
+  deploy.** `ast docs` is explicit: the platform "injects all five credentials
+  into the **agent container** via secrets" (`POSTGRES_HOST`, `PORT`, `USER`,
+  `PASSWORD`, `DB`). `HOST` and `PORT` are ordinary connection vars and do
+  reach ingestion; `USER`, `PASSWORD` and `DB` are secrets and do not. The
+  result is the worst shape of failure: the job connects to the correct server
+  and is rejected at the startup packet — `28000: no PostgreSQL user name
+  specified in startup packet` — inside `assertConnection()`, before any work.
+  Every sweep and every digest in the deployment dies there.
+
+  **Local dev does not reproduce it.** `ast project` gives ingestion containers
+  the full set, so the sweep works perfectly on a laptop and has never once
+  connected in production. That is precisely how it shipped.
+
+  `scheduler/src/db.ts` now prefers the individual vars, falls back to
+  `POSTGRES_URL` (an ordinary connection var, so it survives the split), and
+  otherwise fails with a message naming the missing variables. Both jobs print
+  `[slack-radar] db …` before connecting. `POSTGRES_USER`/`PASSWORD`/`DB` exist
+  as optional per-job inputs in `astropods.yml` as a last resort.
+- **The AI gateway is an exception to that, and it was verified rather than
+  assumed.** `ASTRO_GATEWAY_URL` and `ASTRO_GATEWAY_API_KEY` **do** reach
+  ingestion containers even though they come from a `models: { provider:
+  gateway }` entry. The mechanism is different from a provider credential: the
+  CLI **mints a short-lived gateway key per workload** rather than propagating
+  one static var — `AI Gateway development key minted` prints on `ast project
+  start` and again on every `ast project trigger`. Checked on `ast/0.22.1` by
+  logging presence from inside `ingestion.discussion_sweep`, then by making a
+  real `/v1/decisions` call from that container. The `impact …` line the sweep
+  prints every run is the standing check, so this does not have to be
+  rediscovered.
 - **Never `ast agent redeploy` directly** — use `scripts/deploy.sh`, which pins
   `--adapter slack` (the CLI defaults to `web` and silently drops Slack
   ingestion) and rebuilds `SLACK_CONFIG` from `WATCHED_CHANNEL_IDS`.
@@ -321,8 +411,18 @@ together:
   only and gate in `agent/index.ts`.
 - **Bot-authored messages never arrive.** The sidecar filters on `bot_id`.
 - **Crons are not in `astropods.yml`** for deployed jobs (`dev.schedules` is
-  local only). They are entered at fresh `ast deploy` and preserved on redeploy,
-  so changing a cadence needs a delete + fresh deploy.
+  local only). They are entered at fresh `ast deploy` and preserved on redeploy.
+  Changing one does **not** need a delete: `ast agent redeploy` takes
+  `--schedule <job>=<cron>`, repeatable. (This used to say a delete was
+  required, which was true of ast 0.17.1 and is not of 0.22.1 — the same
+  staleness as `docs/CLI-ISSUES.md` #1.)
+
+      scripts/deploy.sh --schedule lead_digest='0 9,14 * * 1-5'
+
+  That matters more than it sounds: the digest path has **no working-hours
+  gate**, only per-lead pause, so a digest cron of `*/30` or `0 * * * *` DMs
+  every lead around the clock. Only the realtime path respects
+  `RADAR_WINDOW_*`.
 
 ## Adding a watched channel
 
@@ -361,18 +461,29 @@ is not news to them. It is a per-team noise filter applied after ingest, and it
 has no effect on what the bot listens to. A channel can be watched globally and
 be some team's home channel at the same time; that is the normal case.
 
-## Demo mode
+## Going fast (demos, tuning loops)
 
-`DEMO_MODE=true` compresses ripeness (quiet 10min→1min, burst 8→3, min-age
-10min→0) and bypasses the working-hours gate on realtime DMs. It deliberately
-does **not** change the prefilter, judge prompt or confidence thresholds — a
-demo mode that loosened those would put a different product on stage than the
-one in the repo.
+There is no demo mode. There was a `DEMO_MODE` flag; it was removed because it
+was a second code path for behaviour the ordinary constants already express, and
+because a flag that silently rewrites five thresholds is easy to leave on. The
+equivalent is explicit:
 
-The cron is the real latency floor and no env var moves it, so a demo also needs
-a once-a-minute `discussion_sweep` in `dev.schedules`. The sweep logs a loud
-warning every run while demo mode is on, because left enabled it judges
-half-formed threads and DMs people at 03:00.
+```bash
+SWEEP_QUIET_MINUTES=1 SWEEP_MIN_AGE_MINUTES=0 SWEEP_BURST_MESSAGES=3
+RADAR_WINDOW_DAYS=0-6 RADAR_WINDOW_START=00:00 RADAR_WINDOW_END=23:59
+```
+
+Keep to timing values. Loosening the prefilter, judge prompt or confidence
+thresholds instead would put a different product on stage than the one in the
+repo, which is the one property worth protecting here.
+
+`RADAR_WINDOW_DAYS` is what makes a weekend rehearsal possible at all — the day
+gate used to be a hardcoded `day === 0 || day === 6` that no timezone value
+could get around. It is also a real production knob for teams that work
+weekends.
+
+The cron is the real latency floor and no env var moves it, so a fast loop also
+needs a more frequent `discussion_sweep` in `dev.schedules`.
 
 `scripts/demo-reset.sql` clears observed and derived state while keeping the
 team registry. It exists because matches are raise-once, so a rehearsal

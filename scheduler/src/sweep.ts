@@ -8,15 +8,23 @@ import {
   insertMatch,
   markScored,
   purgeOldMessages,
+  recordImpact,
 } from "./db";
-import { CONFIG, isDemoMode } from "./config";
+import {
+  NO_OWNER,
+  describeImpact,
+  impactVerdict,
+  scoreImpact,
+  type ImpactScores,
+} from "./decide";
+import { CONFIG } from "./config";
 import { collectFeedback } from "./feedback";
 import { judgeDiscussion } from "./judge";
 import { describeJudge } from "./model";
 import { deliverRealtime, markItemNotified, withinWorkingHours } from "./notify";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { getTracer } from "./observability";
-import { shortlistTeams } from "./prefilter";
+import { eligibleTeams, ineligibleBecause, shortlistTeams, type Candidate } from "./prefilter";
 import type { DiscussionRow, TeamRow } from "./types";
 
 
@@ -49,6 +57,40 @@ function effectiveThreshold(
   return Math.min(0.95, team.min_confidence + entry.rate * CONFIG.noisePenalty());
 }
 
+/**
+ * Add the team the impact scorer named, when the lexical pass missed it.
+ *
+ * This is the half of the change that answers "it matches on topic keywords, so
+ * it misses things that matter but never use them": a thread with zero keyword
+ * hits can now reach the judge on the strength of the owner question alone.
+ *
+ * Lexical candidates keep their position — a keyword hit is harder evidence of
+ * subject than a model's guess — and the result is still capped by
+ * PREFILTER_MAX_TEAMS so a rescued team cannot widen the judge call.
+ */
+function withScoredOwner(
+  lexical: Candidate[],
+  impact: ImpactScores,
+  teams: TeamRow[],
+  discussion: DiscussionRow,
+): Candidate[] {
+  if (impact.owner === NO_OWNER) return lexical;
+  if (impact.owner_confidence < CONFIG.jevOwnerMinProb()) return lexical;
+  if (lexical.some((c) => c.team.key === impact.owner)) return lexical;
+
+  // Re-check eligibility rather than trusting the scorer's menu: the registry
+  // is edited live over Slack and could have moved under this run.
+  const team = eligibleTeams(teams, discussion.channel_id, discussion.participants).find(
+    (t) => t.key === impact.owner,
+  );
+  if (!team) return lexical;
+
+  return [
+    ...lexical,
+    { team, score: 0, hits: [`impact:owner ${impact.owner_confidence.toFixed(2)}`] },
+  ].slice(0, CONFIG.prefilterMaxTeams());
+}
+
 async function processDiscussion(
   discussion: DiscussionRow,
   teams: TeamRow[],
@@ -79,13 +121,59 @@ async function processDiscussion(
           return;
         }
 
-        const candidates = shortlistTeams(
+        // Say why when nothing can be scored. Without this the run reads as
+        // "the radar did nothing" rather than "the radar deliberately did
+        // nothing, and here is the rule".
+        if (!eligibleTeams(teams, discussion.channel_id, discussion.participants).length) {
+          await markScored(discussion.id, discussion.message_count);
+          span.setAttribute("discussion.outcome", "no_eligible_teams");
+          console.log(
+            `[slack-radar] discussion ${discussion.id} in ${
+              discussion.channel_name ? `#${discussion.channel_name}` : discussion.channel_id
+            }: no eligible teams — ${teams
+              .map((t) => `${t.key}: ${ineligibleBecause(t, discussion.channel_id, discussion.participants)}`)
+              .join("; ")}`,
+          );
+          return;
+        }
+
+        const lexical = shortlistTeams(
           messages.map((m) => m.text).join("\n"),
           discussion.channel_id,
+          discussion.participants,
           teams,
           { minScore: CONFIG.prefilterMinScore(), maxTeams: CONFIG.prefilterMaxTeams() },
         );
+        span.setAttribute("discussion.lexical_candidates", lexical.length);
+
+        // Scored on EVERY ripe discussion, not only the ones the prefilter
+        // rejected. It has to be able to reject as well as rescue, or approval
+        // requests and CI chatter keep reaching the judge on a keyword hit.
+        //
+        // null means the gateway is not configured or the call failed. That is
+        // the fall-back-to-lexical path, and it must stay silent-safe: never
+        // treat a missing score as a reason to drop anything.
+        const impact = await scoreImpact(discussion, messages, teams);
+        let candidates = lexical;
+
+        if (impact) {
+          const verdict = impactVerdict(impact);
+          await recordImpact(
+            discussion.id,
+            impact,
+            verdict.drop ? `dropped: ${verdict.reason}` : "judged",
+          );
+          if (verdict.drop) {
+            await markScored(discussion.id, discussion.message_count);
+            span.setAttribute("discussion.outcome", "dropped_by_impact");
+            span.setAttribute("radar.jev.drop_reason", verdict.reason);
+            return;
+          }
+          candidates = withScoredOwner(lexical, impact, teams, discussion);
+        }
+
         span.setAttribute("discussion.candidates", candidates.length);
+        span.setAttribute("discussion.rescued", candidates.length > lexical.length);
 
         if (!candidates.length) {
           await markScored(discussion.id, discussion.message_count);
@@ -98,6 +186,7 @@ async function processDiscussion(
           messages,
           candidates,
           CONFIG.maxTranscriptChars(),
+          impact,
         );
         // A judge that returned nothing usable is still a completed pass: mark
         // it so the next tick does not spend another call on the same text.
@@ -107,7 +196,7 @@ async function processDiscussion(
         // that matched nothing still leaves a record of what was considered.
         for (const d of outcome?.declined ?? []) {
           try {
-            await insertDecline(discussion.id, d.team_key, d.reason);
+            await insertDecline(discussion.id, d.team_key, d.reason, outcome?.landed ?? null);
           } catch (err) {
             console.error(`[slack-radar] failed to record decline for ${d.team_key}:`, err);
           }
@@ -135,6 +224,7 @@ async function processDiscussion(
           const inserted = await insertMatch(
             discussion.id,
             match,
+            outcome.landed,
             belowBar
               ? {
                   reason: `confidence ${match.confidence.toFixed(2)} below this team's bar of ${threshold.toFixed(
@@ -167,6 +257,7 @@ async function processDiscussion(
             urgency: match.urgency,
             headline: match.headline,
             rationale: match.rationale,
+            landed: outcome.landed,
             channelId: discussion.channel_id,
             channelName: discussion.channel_name,
             rootTs: discussion.root_ts,
@@ -228,14 +319,12 @@ export interface SweepStats {
 export async function runSweep(): Promise<SweepStats> {
   const now = new Date();
   console.log(`[slack-radar] judge ${describeJudge()}`);
-  if (isDemoMode()) {
-    // Deliberately shouty. Left on in production this makes the radar judge
-    // half-formed threads and DM people at 03:00.
-    console.warn(
-      `[slack-radar] *** DEMO_MODE IS ON *** quiet=${CONFIG.quietMinutes()}min burst=${CONFIG.burstMessages()} ` +
-        `min-age=${CONFIG.minAgeMinutes()}min, working-hours gate BYPASSED. Turn this off before real use.`,
-    );
-  }
+  // Printed every run, next to the judge's line, because a deploy without a
+  // `provider: gateway` model entry silently falls back to lexical-only
+  // shortlisting. That is a real and invisible downgrade for whoever inherits
+  // this, and this line is the difference between "quietly less precise" and a
+  // sentence saying why.
+  console.log(`[slack-radar] impact ${describeImpact()}`);
 
   const purged = await purgeOldMessages(CONFIG.retentionDays());
   if (purged) console.log(`[slack-radar] purged ${purged} message(s) past retention`);

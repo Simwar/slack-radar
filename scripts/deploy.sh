@@ -31,8 +31,13 @@
 # Cron cadence: discussion_sweep every 15 minutes, lead_digest at 09:00 and
 # 14:00 on weekdays. These are NOT expressible in astropods.yml for deployed
 # jobs (dev.schedules is local only) — they are entered at fresh `ast deploy`
-# time and preserved on redeploy. To change an existing cadence you must delete
-# and deploy fresh.
+# time and preserved on redeploy. Changing one does NOT need a delete; extra
+# args are passed through to `ast agent redeploy`, which takes --schedule:
+#
+#   scripts/deploy.sh --schedule lead_digest='0 9,14 * * 1-5'
+#
+# Get the digest cadence right: that path has no working-hours gate, so an
+# hourly digest cron DMs every lead at 03:00.
 #
 # Usage:
 #   scripts/deploy.sh                                     # redeploy

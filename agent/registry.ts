@@ -249,6 +249,7 @@ export interface MatchSummary {
   confidence: number;
   headline: string;
   rationale: string;
+  landed: string | null;
   channel_id: string;
   root_ts: string;
   last_message_at: Date;
@@ -264,7 +265,7 @@ export async function recentMatches(
     () =>
       getPool().query<MatchSummary>(
         `SELECT m.team_key, m.signal_type, m.urgency, m.confidence, m.headline, m.rationale,
-                d.channel_id, d.root_ts, d.last_message_at, d.message_count
+                m.landed, d.channel_id, d.root_ts, d.last_message_at, d.message_count
            FROM discussion_matches m
            JOIN discussions d ON d.id = m.discussion_id
           WHERE ($1::text[] IS NULL OR m.team_key = ANY($1))

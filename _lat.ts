@@ -1,14 +1,16 @@
 // Time from a lone message being posted to the first judge call, for each combo.
+// "fast" = the timing values a demo or tuning loop sets explicitly.
+const FAST = { SWEEP_QUIET_MINUTES: "1", SWEEP_MIN_AGE_MINUTES: "0", SWEEP_BURST_MESSAGES: "3" };
 const scenarios: [string, boolean, number][] = [
   ["defaults, */15 cron",        false, 15],
   ["cron only (*/1)",            false, 1],
   ["cron only (*/5)",            false, 5],
-  ["DEMO_MODE only, */15 cron",  true, 15],
-  ["DEMO_MODE + */1 cron",       true, 1],
+  ["fast timings, */15 cron",    true, 15],
+  ["fast timings + */1 cron",    true, 1],
 ];
-for (const [label, demo, cron] of scenarios) {
-  for (const k of ["DEMO_MODE","SWEEP_QUIET_MINUTES","SWEEP_MIN_AGE_MINUTES","SWEEP_BURST_MESSAGES"]) delete process.env[k];
-  if (demo) process.env.DEMO_MODE = "true";
+for (const [label, fast, cron] of scenarios) {
+  for (const k of Object.keys(FAST)) delete process.env[k];
+  if (fast) Object.assign(process.env, FAST);
   const { CONFIG } = await import(`./src/config?${label}`);
   const minAge = CONFIG.minAgeMinutes(), quiet = CONFIG.quietMinutes(), burst = CONFIG.burstMessages();
   // ripe when age >= minAge AND silence >= quiet  (lone message: age === silence)

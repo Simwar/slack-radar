@@ -1,4 +1,4 @@
-import { assertConnection, closePool } from "./db";
+import { assertConnection, closePool, describeDb } from "./db";
 import { resolveBackend, resolveJudgeModel } from "./model";
 import { getTracer, shutdownTracing, startTracing } from "./observability";
 import { runSweep } from "./sweep";
@@ -16,6 +16,7 @@ async function main() {
 
         // Retries transient DB unavailability with backoff; throws (job fails,
         // reruns next tick) only on a genuine connection/config error.
+        console.log(`[slack-radar] db ${describeDb()}`);
         await assertConnection();
         const stats = await runSweep();
         span.setAttribute("radar.teams", stats.teams);

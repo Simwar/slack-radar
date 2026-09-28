@@ -20,20 +20,24 @@ Then:
 
 1. **Invite the bot** to every channel you want watched (`/invite @slack-radar`).
 2. **List those channel IDs** in the deploy page's Slack section, under
-   **Observe Channel IDs**. Leave **Allowed Channel IDs** blank. For local dev,
-   use `dev.interfaces.messaging.slack.observe_channel_ids` in `astropods.yml`.
+   **Observe Channel IDs**. Leave **Allowed Channel IDs** blank. For local dev
+   use `dev.interfaces.messaging.slack.observe_channel_ids` in `astropods.yml`,
+   or `WATCHED_CHANNEL_IDS="C1,C2,C3" scripts/deploy.sh`.
 3. **Set up at least one team**, either by pasting a registry into the
-   `TEAMS_CONFIG` input at deploy time (shape: `teams.example.yml`) or simply by
-   DMing the agent: *"set up a team for platform, I am the lead, we own the API
-   gateway and rate limiting"*.
+   `TEAMS_CONFIG` input at deploy time (see below) or simply by DMing the agent:
+   *"set up a team for platform, I am the lead, we own the API gateway and rate
+   limiting"*.
 
-Step 2 makes the bot *listen*. Step 3 decides who gets *told* — until a team
-exists with a lead and some keywords, the radar records messages but can never
-notify anyone.
+Steps 1 and 2 make the bot *listen*. Step 3 decides who gets *told* — until a
+team exists with a lead and some keywords, the radar records messages but can
+never notify anyone.
 
-Both halves of steps 1 and 2 are required: a channel with the bot invited but
-absent from Observe Channel IDs is silently invisible, because the sidecar drops
-its messages before the agent runs.
+**Both halves of steps 1 and 2 are required, and missing either is silent.** A
+channel the bot is in but that is absent from Observe Channel IDs is invisible,
+because the sidecar drops its messages before the agent runs. A channel listed
+there that the bot is not a member of is equally invisible, because Slack never
+sends the events in the first place. That double requirement is the single most
+common reason a freshly deployed radar sees nothing.
 
 ### Nothing operational lives in this repo
 
@@ -143,9 +147,14 @@ case the whole agent exists for: a choice about your area being made somewhere
 you are not.
 
 **5. "anyone up for lunch?" / "deploy 4.2.1 finished successfully"**
-Prefilter scores 0 for every team. → **No model call, no cost, no notification.**
-Most channel traffic ends here, which is what makes watching dozens of channels
-affordable.
+Prefilter scores 0 for every team, and the impact scorer agrees — measured, both
+come back under 0.15 on every question, and the deploy line classifies as
+`status_update` at 1.00. → **No judge call, no notification.**
+
+Note the cost shape changed when impact scoring was added: this traffic used to
+be free, and now costs one small decision call (~700 tokens) per ripe discussion.
+That is the price of scenario 9 below, which the free prefilter could never
+catch.
 
 **6. A thread you were already pinged about grows to 30 messages**
 Re-judged once it doubles in size, but `UNIQUE(discussion_id, team_key)` plus
@@ -161,7 +170,19 @@ in that channel** without anyone editing config.
 **8. A GitHub/CI app posts "gateway health check failing"**
 The sidecar drops anything with a `bot_id` before it reaches the agent. →
 **Invisible.** A discussion kicked off by an app alert is only seen from the
-first human reply onward.
+first human reply onward. Once a human does reply, the impact scorer decides on
+substance rather than on the thread looking automated: measured, an alert plus
+*"this is hitting checkout, customers can't pay"* scores `customer_affecting`
+0.98 and reaches the judge, while a clean build notification scores 0.04 and is
+dropped.
+
+**9. "who owns the thing that decides whether a trial converts to paid?"**
+No team's keywords appear anywhere in it, so the prefilter scores 0 and before
+impact scoring this was **invisible** — the judge was never called, so no prompt
+change could have rescued it. The scorer reads `unanswered` 0.94 and names
+`billing` as the owner at 0.65, which adds billing as a judge candidate. →
+**Reaches the judge on substance, with no keyword hit.** This is the case the
+impact layer exists for.
 
 ### If you expected a ping and got nothing
 
@@ -170,7 +191,8 @@ In the order worth checking:
 1. Were the containers running when you posted? The sidecar only sees live
    events — Slack does not replay, so a message sent while the agent was down is
    simply gone.
-2. Is the channel in `observe_channel_ids`? Invited-but-unlisted is silent.
+2. Is the channel in `observe_channel_ids`, **and** is the bot actually a member
+   of it? Either one missing is silent.
 3. Has 15 minutes passed?
 4. Is it a weekday between 09:00 and 18:00 in `RADAR_TIMEZONE`? Outside that,
    even a high-urgency match waits for the digest.
@@ -182,8 +204,9 @@ In the order worth checking:
 
 ## Configuration
 
-Deploy time asks you for **nine** values, all of them either a credential or a
-fact about your workspace:
+Deploy time asks for **eight** top-level values, plus the gateway model to use
+and the Slack bot token on each scheduled job. All of them are either a
+credential or a fact about your workspace:
 
 | Input | Notes |
 |---|---|
@@ -196,6 +219,59 @@ fact about your workspace:
 | `SLACK_WORKSPACE_DOMAIN` | The `acme` in `acme.slack.com`, for thread deep links. |
 | `RADAR_TIMEZONE` | Timezone the realtime-DM working window is evaluated in. |
 | `RADAR_SLACK_BOT_TOKEN` | Per ingestion job — provider vars do not reach those containers. |
+| `MODEL_DEFAULT` | Picked from the gateway model menu at deploy. Currently unread: the decision model takes its id in the request body. |
+
+### Writing `TEAMS_CONFIG`
+
+This is the only input with any shape to it. Paste JSON (preferred) or YAML:
+
+```json
+{"teams":[
+  {"key":"platform",
+   "name":"Platform",
+   "description":"Owns the API gateway, auth/SSO and rate limiting.",
+   "leads":["U01ABCDEFGH"],
+   "keywords":["gateway","envoy","rate limit","sso","429"],
+   "topics":["API gateway routing and rate limits"],
+   "home_channels":["C01ABCDEFGH"]}
+]}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `key` | **yes** | Stable identifier. Everything else can be added later over Slack. |
+| `name` | no | Display name. Also matched, at half weight — a bare name mention never qualifies on its own. |
+| `description` | no | Prose, what the team owns. The judge reads this to decide ownership, so it earns its length. |
+| `leads` | no | Slack **user IDs** (`U…`), not `@handles`. Profile → "Copy member ID". No leads means nobody to tell, so the team is skipped. |
+| `topics` | no | Phrases describing the area. Scored higher than keywords (1.5 vs 1). |
+| `keywords` | no | Literal terms. Single words match whole words only — `hallucination` will not match `hallucinating`. Multi-word entries match as substrings. |
+| `home_channels` | no | Channels the team already reads. Never flagged for them. **Fill this in** — it is the single biggest noise saving here. |
+| `realtime` | no | `false` = digest only, never an instant DM. Default `true`. |
+| `min_confidence` | no | 0-1 bar a match must clear. Default `0.6`. |
+
+Four things that bite:
+
+1. **Unknown fields are ignored without warning.** A hand-written config using
+   invented keys (`urgent_triggers`, `ignore`, …) parses fine and does nothing.
+   The nine above are the whole list.
+2. **Prefer JSON.** YAML depends on line breaks, and this value passes through
+   web forms and shell variables that can flatten it to one line — which still
+   looks right on screen and parses to nothing. In YAML, quote anything numeric
+   (`"429"`) or it is read as a number.
+3. **Don't use your own product's name as a keyword.** In a company that builds
+   agents, `agent` is in nearly every message: every discussion would reach the
+   model and be rejected. Pure cost, no signal.
+4. **Placeholder IDs are rejected on purpose.** `U000EXAMPLE1` and friends pass
+   the format check but fail at `conversations.open` with `user_not_found` —
+   a match raised, nothing delivered, one log line in the ingestion workload.
+
+`TEAMS_CONFIG` is read **only when the registry is empty**. After the first
+deploy the registry lives in Postgres and leads edit it by DMing the agent, so
+re-applying it every boot would silently undo their tuning. To make the input
+win again, clear the registry first — deliberately a manual act.
+
+`teams.example.yml` is the fully annotated version of the above. It is not read
+at runtime and not shipped in the image.
 
 Everything else is **hardcoded in `scheduler/src/config.ts`**, which is the
 single source of truth for tuning. The table below mirrors it. (`JUDGE_MODEL` is
@@ -242,12 +318,37 @@ is a two-line change with no code deploy.
 | `NOISE_PENALTY` | 0.3 | How hard 👎 raises the bar for a (team, channel) pair. `0` disables the feedback loop. |
 | `NOISE_MIN_SAMPLES` | 5 | Ratings needed before that feedback is trusted. |
 
+**Impact scoring** — the gateway decision model, run on every ripe discussion
+before the judge. Inactive (and logged as such) if the gateway is not configured.
+
+| Constant | Default | Effect |
+|---|---|---|
+| `JEV_MODEL` | `jev-1-13-0` | Decision model id. |
+| `JEV_IMPACT_FLOOR` | 0.15 | Drop only if **every** impact question scores under this. Far below 0.5 on purpose — anything hedged goes to the judge. |
+| `JEV_NOISE_TYPES` | `approval_request,ci_alert,status_update` | Thread types treated as noise. |
+| `JEV_NOISE_MIN_CONFIDENCE` | 0.85 | How sure the classifier must be of a noise type before it counts. |
+| `JEV_NOISE_MAX_IMPACT` | 0.5 | ...and the impact ceiling below which a noise type may be dropped. Keeps "it looks automated" from dropping a CI alert about a real outage (scenario 8). |
+| `JEV_OWNER_MIN_PROB` | 0.5 | Confidence needed before a team the lexical prefilter missed is added as a judge candidate. |
+| `JEV_MAX_TEAMS` | 12 | Teams offered to the "which team owns this?" question. |
+| `JEV_MAX_TRANSCRIPT_CHARS` | 4000 | Transcript sent to the scorer. |
+| `JEV_TIMEOUT_MS` | 8000 | After this it falls back to lexical-only and says so. |
+
+Every score is persisted to `discussions.last_impact` whatever these thresholds
+do, including for dropped discussions, so they can be re-derived from real
+traffic rather than from intuition:
+
+```sql
+SELECT last_impact_outcome, count(*) FROM discussions
+ WHERE last_impact IS NOT NULL GROUP BY 1;
+```
+
 **Delivery and feedback**
 
 | Constant | Default | Effect |
 |---|---|---|
 | `RADAR_WINDOW_START` | 09:00 | Earliest an urgent DM may be sent. |
 | `RADAR_WINDOW_END` | 18:00 | Latest an urgent DM may be sent; outside the window items fall through to the digest. |
+| `RADAR_WINDOW_DAYS` | `1-5` | Days an urgent DM may be sent (`0` = Sunday). Range, list, or both; ranges wrap, so `5-1` is Fri–Mon. Set `0-6` for a team that works weekends. |
 | `DIGEST_MAX_ITEMS` | 12 | Items shown per digest; the rest stay available via "what did I miss". |
 | `USEFUL_EMOJI` / `NOISE_EMOJI` | `+1` / `-1` | What leads react with to rate a notification. |
 | `FEEDBACK_LOOKBACK_HOURS` | 120 | How far back to poll for reactions. |
@@ -257,9 +358,19 @@ is a two-line change with no code deploy.
 ## Demoing it
 
 Production timings make it undemoable — 15 minutes to a DM, and realtime
-delivery only on weekdays 09:00-18:00. `DEMO_MODE=true` compresses the waits and
-bypasses the working-hours gate so a notification lands in about a minute,
-without touching the prefilter, judge prompt or thresholds.
+delivery only on weekdays 09:00-18:00. There is no demo *mode*; there are the
+constants above, set explicitly:
+
+```bash
+SWEEP_QUIET_MINUTES=1 SWEEP_MIN_AGE_MINUTES=0 SWEEP_BURST_MESSAGES=3 \
+RADAR_WINDOW_DAYS=0-6 RADAR_WINDOW_START=00:00 RADAR_WINDOW_END=23:59
+```
+
+Nothing there touches the prefilter, the judge prompt or the confidence
+thresholds, so an audience watches the same logic that runs in production decide
+things. That was the point of the old `DEMO_MODE` flag, and spelling the values
+out keeps the property while removing a second code path that could drift from
+the first — and a flag that is easy to leave switched on.
 
 Pair it with a once-a-minute `discussion_sweep` cron (the cron is the real
 latency floor) and reset between rehearsals with `scripts/demo-reset.sql` —

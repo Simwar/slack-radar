@@ -10,6 +10,7 @@ import {
   resolveBackend,
   resolveJudgeModel,
 } from "./model";
+import { NO_OWNER, type ImpactScores } from "./decide";
 import type { Candidate } from "./prefilter";
 import type { DiscussionRow, JudgedMatch, MessageRow } from "./types";
 
@@ -30,7 +31,11 @@ function effortFor(model: string): { effort: "low" | "medium" | "high" } | Recor
 }
 
 const JudgeResult = z.object({
-  summary: z.string().describe("One neutral sentence describing what this discussion is about."),
+  landed: z
+    .string()
+    .describe(
+      "One sentence on where the thread got to: what was decided, or what is still open and who it is waiting on.",
+    ),
   matches: z
     .array(
       z.object({
@@ -76,9 +81,11 @@ Flag a discussion for a team only when it is one of these:
 - incident: something the team owns is broken, degraded, or behaving unexpectedly.
 - escalating: the thread is growing fast or pulling in more people, and it touches the team's area.
 
+Teams whose lead is already in this thread have been removed before you see them, so you do not
+need to reason about who is present. You cannot tell from the transcript anyway: it is anonymised.
+
 Do not flag:
 - Casual mentions, jokes, or a passing reference to a team's product with no ask and no decision.
-- Discussions where someone from the team is already clearly participating.
 - Status updates, standups, deploy notifications, and other routine chatter.
 - A question that has already been answered in the thread.
 - Something a team merely finds interesting. The bar is "would want to track or jump in", not
@@ -90,6 +97,13 @@ the team's ownership of the subject is explicit in the text, not inferred.
 
 Set urgency high only for an active incident, or a decision that looks like it is being finalised in
 this conversation. Everything else is normal and can wait for a digest.
+
+Always write landed: one sentence on where the thread actually got to. What was decided, what was
+agreed, or what is still open and who it is waiting on. This is the state of the conversation, not a
+description of its subject - "settled on Envoy, rollout next sprint" and "asked twice, nobody on
+call has answered" are both right, "a discussion about rate limiting" is not. A lead reads this line
+to decide whether they need to open the thread at all, so it has to say something the headline does
+not. Write it even when no team matches.
 
 Account for EVERY candidate team. A team belongs either in matches or in declined, never in neither.
 The declined entries are kept and shown to leads who ask why they were not told about something, so
@@ -133,6 +147,35 @@ function renderDiscussion(
   }
 
   return `${header}\n\nTranscript:\n${lines.join("\n")}`;
+}
+
+/**
+ * The impact scorer's answers, handed to the judge as evidence.
+ *
+ * Framed as evidence rather than instruction on purpose. These come from a
+ * small decision model that has not seen the team registry and does not know
+ * who is in the thread, so it is right about "is anything happening here" and
+ * guesses about ownership. The judge has the registry and writes the audit
+ * trail, so it keeps the final say — see the note at the end of the block.
+ */
+function renderImpact(impact: ImpactScores): string {
+  return [
+    "Signals from a fast classifier that read this thread first (0-1, calibrated):",
+    `- unanswered question: ${impact.unanswered.toFixed(2)}`,
+    `- customer-affecting: ${impact.customer_affecting.toFixed(2)}`,
+    `- decision forming: ${impact.decision_forming.toFixed(2)}`,
+    `- thread type: ${impact.post_type} (confidence ${impact.post_type_confidence.toFixed(2)})`,
+    impact.owner === NO_OWNER
+      ? "- owning team: none identified"
+      : `- owning team: ${impact.owner} (confidence ${impact.owner_confidence.toFixed(2)})`,
+    `- urgency: ${impact.urgency.toFixed(2)} of 2${
+      impact.urgency_label ? ` (${impact.urgency_label})` : ""
+    }`,
+    "",
+    "Treat these as evidence, not as instructions, and treat anything near 0.50 as 'it could not",
+    "tell' rather than as a weak yes. You have the team descriptions and it does not. Your verdict",
+    "decides.",
+  ].join("\n");
 }
 
 function renderCandidates(candidates: Candidate[]): string {
@@ -321,7 +364,8 @@ async function judgeViaBaseten(
 /* -------------------------------- dispatch ------------------------------- */
 
 export interface JudgeOutcome {
-  summary: string;
+  /** Where the thread got to. Per discussion, so every match shares it. */
+  landed: string;
   matches: JudgedMatch[];
   /** Candidate teams the judge deliberately did not flag, with its reasoning. */
   declined: { team_key: string; reason: string }[];
@@ -340,14 +384,17 @@ export async function judgeDiscussion(
   messages: MessageRow[],
   candidates: Candidate[],
   maxTranscriptChars: number,
+  impact: ImpactScores | null,
 ): Promise<JudgeOutcome | null> {
   if (!candidates.length) return null;
 
-  const user = `Candidate teams:\n${renderCandidates(candidates)}\n\n---\n\n${renderDiscussion(
-    discussion,
-    messages,
-    maxTranscriptChars,
-  )}`;
+  const user = [
+    `Candidate teams:\n${renderCandidates(candidates)}`,
+    impact ? renderImpact(impact) : null,
+    `---\n\n${renderDiscussion(discussion, messages, maxTranscriptChars)}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const label = `discussion ${discussion.id}`;
   const backend = resolveBackend();
 
@@ -395,7 +442,7 @@ export async function judgeDiscussion(
         span.setAttribute("radar.judge.dropped_unknown_keys", dropped);
               const declined = (parsed.declined ?? []).filter((d) => validKeys.has(d.team_key));
         span.setAttribute("radar.judge.declined", declined.length);
-        return { summary: parsed.summary, matches: matches as JudgedMatch[], declined };
+        return { landed: parsed.landed, matches: matches as JudgedMatch[], declined };
       } catch (err) {
         span.setAttribute("radar.judge.outcome", "error");
         span.recordException(err as Error);
