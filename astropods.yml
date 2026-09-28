@@ -128,7 +128,7 @@ inputs:
 # path only, and a job started by `ast agent trigger` dies with 28000.
 ingestion:
   # Score ripe discussions and DM anything urgent.
-  discussion_sweep:
+  discussion-sweep:
     container:
       build:
         context: .
@@ -136,7 +136,7 @@ ingestion:
     trigger:
       type: schedule
     inputs:
-      - name: RADAR_SLACK_BOT_TOKEN
+      - name: RADAR-SLACK-BOT-TOKEN
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can DM leads and read their reactions. Same value as the agent's."
@@ -157,7 +157,7 @@ ingestion:
       # - name: MESSAGE_RETENTION_DAYS # default 30 — re-expose this one FIRST if a privacy review needs it changeable
 
   # Batched delivery for everything not urgent enough to interrupt for.
-  lead_digest:
+  lead-digest:
     container:
       build:
         context: .
@@ -165,7 +165,7 @@ ingestion:
     trigger:
       type: schedule
     inputs:
-      - name: RADAR_SLACK_BOT_TOKEN
+      - name: RADAR-SLACK0-BOT-TOKEN
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can send digest DMs. Same value as the sweep's."
