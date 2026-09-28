@@ -165,7 +165,7 @@ ingestion:
     trigger:
       type: schedule
     inputs:
-      - name: RADAR-SLACK0-BOT-TOKEN
+      - name: RADAR-SLACK-BOT-TOKEN
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can send digest DMs. Same value as the sweep's."
