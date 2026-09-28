@@ -102,6 +102,12 @@ export const CONFIG = {
   /** Lexical score a team must reach to be shown to the judge. 1 = one keyword
    *  hit. Favours recall on purpose; the judge is the precision layer. */
   prefilterMinScore: () => num("PREFILTER_MIN_SCORE", 1),
+  /** How far back "already engaged" reaches, in messages from the end of the
+   *  thread. A lead active within this many is not told about it; one who spoke
+   *  only before it is, because the thread has moved on without them. Set it to
+   *  a number larger than SWEEP_MAX_MESSAGES to restore the old behaviour of
+   *  suppressing on any participation at all. */
+  leadEngagedMessages: () => num("LEAD_ENGAGED_MESSAGES", 10),
   /** Most teams considered for any one discussion. */
   prefilterMaxTeams: () => num("PREFILTER_MAX_TEAMS", 3),
   /** How hard thumbs-down raises the bar for a (team, channel) pair. 0 disables. */

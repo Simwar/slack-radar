@@ -317,6 +317,7 @@ is a two-line change with no code deploy.
 |---|---|---|
 | `PREFILTER_MIN_SCORE` | 1 | Lexical bar to reach the judge. **The main cost lever** — raise it to spend less, at the cost of recall. Scoring: keyword hit +1, topic hit +1.5, team-name mention +0.5 (deliberately below the bar, so a bare name mention never qualifies). |
 | `PREFILTER_MAX_TEAMS` | 3 | Most teams considered per discussion. |
+| `LEAD_ENGAGED_MESSAGES` | 10 | How far back "already engaged" reaches. A team is not told about a thread one of its leads has spoken in within this many messages of the end. A lead who spoke only before that **is** told — the thread moved on without them. Set above `SWEEP_MAX_MESSAGES` to suppress on any participation at all. |
 | `NOISE_PENALTY` | 0.3 | How hard 👎 raises the bar for a (team, channel) pair. `0` disables the feedback loop. |
 | `NOISE_MIN_SAMPLES` | 5 | Ratings needed before that feedback is trusted. |
 

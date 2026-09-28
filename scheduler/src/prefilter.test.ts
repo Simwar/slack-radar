@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { eligibleTeams, ineligibleBecause, shortlistTeams } from "./prefilter";
+import { eligibleTeams, ineligibleBecause, recentAuthors, shortlistTeams } from "./prefilter";
 import type { TeamRow } from "./types";
 
 function team(over: Partial<TeamRow> = {}): TeamRow {
@@ -33,7 +33,7 @@ describe("eligibleTeams", () => {
   });
 
   // The judge cannot see this: transcripts are anonymised before they are sent.
-  test("drops a team whose lead is already in the thread", () => {
+  test("drops a team whose lead is active in the thread", () => {
     expect(eligibleTeams([team()], "C_OTHER", ["U_A", "U_LEAD"])).toHaveLength(0);
   });
 });
@@ -93,7 +93,35 @@ describe("ineligibleBecause", () => {
   test("names the rule that fired", () => {
     expect(ineligibleBecause(team({ lead_slack_ids: [] }), "C1", [])).toBe("no leads");
     expect(ineligibleBecause(team({ home_channel_ids: ["C1"] }), "C1", [])).toContain("home channels");
-    expect(ineligibleBecause(team(), "C1", ["U_LEAD"])).toBe("lead U_LEAD is in the thread");
+    expect(ineligibleBecause(team(), "C1", ["U_LEAD"])).toBe("lead U_LEAD is active in the thread");
     expect(ineligibleBecause(team(), "C1", ["U_A"])).toBeNull();
+  });
+});
+
+describe("recentAuthors", () => {
+  const msgs = (ids: (string | null)[]) => ids.map((user_id) => ({ user_id }));
+
+  test("takes the tail, not the whole thread", () => {
+    expect(recentAuthors(msgs(["U_LEAD", "U_A", "U_B", "U_C"]), 2)).toEqual(["U_B", "U_C"]);
+  });
+
+  // The point of the change: a lead who spoke early and has not since is told
+  // about a thread that moved on without them.
+  test("a lead who only spoke early is not engaged", () => {
+    const engaged = recentAuthors(msgs(["U_LEAD", "U_A", "U_B", "U_C"]), 2);
+    expect(eligibleTeams([team()], "C_OTHER", engaged)).toHaveLength(1);
+  });
+
+  test("...but is engaged while still in the tail", () => {
+    const engaged = recentAuthors(msgs(["U_A", "U_B", "U_LEAD"]), 2);
+    expect(eligibleTeams([team()], "C_OTHER", engaged)).toHaveLength(0);
+  });
+
+  test("deduplicates and skips authorless messages", () => {
+    expect(recentAuthors(msgs(["U_A", null, "U_A", "U_B"]), 10)).toEqual(["U_A", "U_B"]);
+  });
+
+  test("a window larger than the thread covers all of it", () => {
+    expect(recentAuthors(msgs(["U_LEAD", "U_A"]), 99)).toEqual(["U_LEAD", "U_A"]);
   });
 });

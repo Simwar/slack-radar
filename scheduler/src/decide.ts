@@ -160,8 +160,8 @@ export function describeImpact(): string {
  * Anonymised to the same person1/person2 labels the judge sees.
  *
  * Identity is deliberately withheld here too: whether a lead is already in the
- * thread is a Postgres fact (participants ∩ lead_slack_ids), checked exactly in
- * prefilter.ts. Asking a model to infer it from an anonymised transcript is how
+ * thread is a Postgres fact (recent authors ∩ lead_slack_ids), checked exactly
+ * in prefilter.ts. Asking a model to infer it from an anonymised transcript is how
  * you get a 0.48 — a calibrated way of saying "you did not tell me".
  */
 function renderState(
@@ -214,13 +214,14 @@ export async function scoreImpact(
   discussion: DiscussionRow,
   messages: MessageRow[],
   teams: TeamRow[],
+  engaged: string[],
 ): Promise<ImpactScores | null> {
   if (!impactEnabled()) return null;
 
   // Only teams that could actually be told: the same eligibility the lexical
   // prefilter applies, so the owner question cannot name a team we would refuse
   // to notify anyway.
-  const selectable = eligibleTeams(teams, discussion.channel_id, discussion.participants).slice(
+  const selectable = eligibleTeams(teams, discussion.channel_id, engaged).slice(
     0,
     CONFIG.jevMaxTeams(),
   );
