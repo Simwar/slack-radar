@@ -56,13 +56,27 @@ export function eligibleTeams(
   channelId: string,
   participants: string[],
 ): TeamRow[] {
-  const inThread = new Set(participants);
-  return teams.filter(
-    (team) =>
-      team.lead_slack_ids.length > 0 &&
-      !team.home_channel_ids.includes(channelId) &&
-      !team.lead_slack_ids.some((id) => inThread.has(id)),
-  );
+  return teams.filter((t) => ineligibleBecause(t, channelId, participants) === null);
+}
+
+/**
+ * Why this team cannot be a candidate here, or null when it can be.
+ *
+ * Separate from eligibleTeams so the sweep can say which rule fired. A
+ * discussion dropped for want of an eligible team is otherwise the quietest
+ * outcome in the system: no match, no decline, no log, and a registry that
+ * looks fine until someone compares it field by field against what they meant.
+ */
+export function ineligibleBecause(
+  team: TeamRow,
+  channelId: string,
+  participants: string[],
+): string | null {
+  if (!team.lead_slack_ids.length) return "no leads";
+  if (team.home_channel_ids.includes(channelId)) return "this is one of its home channels";
+  const lead = team.lead_slack_ids.find((id) => participants.includes(id));
+  if (lead) return `lead ${lead} is in the thread`;
+  return null;
 }
 
 /**

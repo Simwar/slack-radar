@@ -24,7 +24,7 @@ import { describeJudge } from "./model";
 import { deliverRealtime, markItemNotified, withinWorkingHours } from "./notify";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { getTracer } from "./observability";
-import { eligibleTeams, shortlistTeams, type Candidate } from "./prefilter";
+import { eligibleTeams, ineligibleBecause, shortlistTeams, type Candidate } from "./prefilter";
 import type { DiscussionRow, TeamRow } from "./types";
 
 
@@ -118,6 +118,22 @@ async function processDiscussion(
           // Retention purged the text out from under an old discussion row.
           await markScored(discussion.id, discussion.message_count);
           span.setAttribute("discussion.outcome", "no_text");
+          return;
+        }
+
+        // Say why when nothing can be scored. Without this the run reads as
+        // "the radar did nothing" rather than "the radar deliberately did
+        // nothing, and here is the rule".
+        if (!eligibleTeams(teams, discussion.channel_id, discussion.participants).length) {
+          await markScored(discussion.id, discussion.message_count);
+          span.setAttribute("discussion.outcome", "no_eligible_teams");
+          console.log(
+            `[slack-radar] discussion ${discussion.id} in ${
+              discussion.channel_name ? `#${discussion.channel_name}` : discussion.channel_id
+            }: no eligible teams — ${teams
+              .map((t) => `${t.key}: ${ineligibleBecause(t, discussion.channel_id, discussion.participants)}`)
+              .join("; ")}`,
+          );
           return;
         }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { eligibleTeams, shortlistTeams } from "./prefilter";
+import { eligibleTeams, ineligibleBecause, shortlistTeams } from "./prefilter";
 import type { TeamRow } from "./types";
 
 function team(over: Partial<TeamRow> = {}): TeamRow {
@@ -86,5 +86,14 @@ describe("shortlistTeams", () => {
     const got = shortlistTeams("gateway envoy", "C1", [], teams, { minScore: 1, maxTeams: 2 });
     expect(got).toHaveLength(2);
     expect(got[0]!.team.key).toBe("b");
+  });
+});
+
+describe("ineligibleBecause", () => {
+  test("names the rule that fired", () => {
+    expect(ineligibleBecause(team({ lead_slack_ids: [] }), "C1", [])).toBe("no leads");
+    expect(ineligibleBecause(team({ home_channel_ids: ["C1"] }), "C1", [])).toContain("home channels");
+    expect(ineligibleBecause(team(), "C1", ["U_LEAD"])).toBe("lead U_LEAD is in the thread");
+    expect(ineligibleBecause(team(), "C1", ["U_A"])).toBeNull();
   });
 });
