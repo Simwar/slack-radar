@@ -83,16 +83,12 @@ inputs:
     # retired entries, each a dead option a deployer could pick. Verify before
     # editing: curl $BASETEN_BASE_URL/models -H "Authorization: Bearer $BASETEN_API_KEY"
     options:
-      - zai-org/GLM-4.7
       - zai-org/GLM-5.3
       - zai-org/GLM-5.3-Flash
       - zai-org/GLM-5.2
       - deepseek-ai/DeepSeek-V4-Pro
       - deepseek-ai/DeepSeek-V4-Flash-0731
       - moonshotai/Kimi-K3
-      - moonshotai/Kimi-K2.6
-      - thinkingmachines/inkling
-      - thinkingmachines/inkling-small
       - nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B
       - openai/gpt-oss-120b
     default: "zai-org/GLM-4.7"
