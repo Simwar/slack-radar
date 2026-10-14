@@ -97,6 +97,13 @@ inputs:
     name: SLACK_WORKSPACE_DOMAIN
     datatype: string
     description: "The 'acme' in acme.slack.com. Without it, thread links degrade to a slack:// URI."
+  # Top-level, not per-job: when two jobs declare the same input name the
+  # platform targets only one of them, chosen at random per deploy.
+  RADAR_SLACK_BOT_TOKEN:
+    name: RADAR_SLACK_BOT_TOKEN
+    datatype: string
+    secret: true
+    description: "Slack bot token (xoxb-...), so the sweep and digest jobs can DM leads and read their reactions. Same value as the Slack adapter's."
   # Field reference and a worked example: README.md, teams.example.yml.
   # Unknown fields are ignored silently, which is the usual reason a
   # hand-written registry does nothing.
@@ -118,8 +125,7 @@ inputs:
     default: "America/New_York"
     description: "Timezone for the instant-DM window (weekdays 09:00-18:00 local). Anything outside it waits for the next digest."
 
-# Scheduled jobs do not inherit the agent's Slack token, so it is repeated per
-# job. Postgres credentials do reach them, by secretKeyRef from the knowledge
+# Postgres credentials reach scheduled jobs by secretKeyRef from the knowledge
 # store. On a platform older than astropods/astro#2902 that is true of the cron
 # path only, and a job started by `ast agent trigger` dies with 28000.
 ingestion:
@@ -131,15 +137,11 @@ ingestion:
         dockerfile: scheduler/Dockerfile
     trigger:
       type: schedule
-    inputs:
-      - name: RADAR-SLACK-BOT-TOKEN
-        datatype: string
-        secret: true
-        description: "Slack bot token (xoxb-...), so this job can DM leads and read their reactions. Same value as the agent's."
-      # Everything else is hardcoded in scheduler/src/config.ts, with the table
-      # in README.md. Each constant still reads its env var first, so
-      # re-exposing one is uncommenting a stub here — no code deploy.
-      #
+    # Tuning is hardcoded in scheduler/src/config.ts, with the table in
+    # README.md. Each constant still reads its env var first, so re-exposing
+    # one is uncommenting a stub here — no code deploy.
+    #
+    # inputs:
       # - name: JUDGE_MODEL          # run a different model for the judge than for chat
       #   datatype: string
       #   optional: true
@@ -160,10 +162,5 @@ ingestion:
         dockerfile: scheduler/Dockerfile.digest
     trigger:
       type: schedule
-    inputs:
-      - name: RADAR-SLACK-BOT-TOKEN
-        datatype: string
-        secret: true
-        description: "Slack bot token (xoxb-...), so this job can send digest DMs. Same value as the sweep's."
-      # This job has no working-hours gate — the cron IS the schedule. Keep it
-      # inside working hours; DIGEST_MAX_ITEMS lives in config.ts.
+    # This job has no working-hours gate — the cron IS the schedule. Keep it
+    # inside working hours; DIGEST_MAX_ITEMS lives in config.ts.

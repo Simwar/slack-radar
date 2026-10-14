@@ -368,10 +368,13 @@ together:
 ## Platform gotchas inherited from git-to-it
 
 - **Provider-scoped vars do not reach ingestion containers, but top-level
-  inputs do.** That split is why the Slack token is a per-ingestion input
-  (`RADAR_SLACK_BOT_TOKEN` — `SLACK_BOT_TOKEN` is claimed by the messaging
-  adapter and routed to the sidecar) while the model keys are top-level inputs.
-  Anything both containers need should be a top-level input.
+  inputs do.** Anything both containers need should be a top-level input. That
+  includes `RADAR_SLACK_BOT_TOKEN` (`SLACK_BOT_TOKEN` is claimed by the
+  messaging adapter and routed to the sidecar).
+- **Never declare the same input name under two ingestion jobs.** The platform
+  keeps only the first job's target, and Go map order picks which job that is,
+  so each deploy hands the input to one job at random. This silently broke the
+  digest's Slack token; it is a top-level input for that reason.
 - **Postgres credentials hit that same split, and it cost a production
   deploy.** `ast docs` is explicit: the platform "injects all five credentials
   into the **agent container** via secrets" (`POSTGRES_HOST`, `PORT`, `USER`,
@@ -500,8 +503,7 @@ run at the same message produces nothing and looks like a failure.
 Two confirmed CLI bugs (v0.17.1) affect this project directly, and together they
 mean **a schedule-triggered ingestion cannot be run or fully configured in local
 dev**: `ast project trigger` always fails on a flag it does not own, and
-`ast project configure` never prompts for `ingestion.<job>.inputs` (which is why
-`RADAR_SLACK_BOT_TOKEN` has to be a deploy var and has a code-level fallback).
+`ast project configure` never prompts for `ingestion.<job>.inputs`.
 
 Details, source excerpts, suggested fixes and workarounds:
 **[docs/CLI-ISSUES.md](docs/CLI-ISSUES.md)**. Re-check these before assuming a

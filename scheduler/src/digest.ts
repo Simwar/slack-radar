@@ -8,7 +8,7 @@ import { SpanStatusCode, type Span } from "@opentelemetry/api";
 import { CONFIG } from "./config";
 import { feedbackFooter, renderItem, type DeliverableItem } from "./notify";
 import { getTracer } from "./observability";
-import { openDM, postDM } from "./slack";
+import { openDM, postDM, takeLastSlackError } from "./slack";
 import type { PendingDigestRow } from "./types";
 
 
@@ -118,6 +118,7 @@ async function sendOneDigest(
     const dm = await openDM(leadId);
     if (!dm) {
       span.setAttribute("radar.digest.outcome", "dm_open_failed");
+      span.setAttribute("radar.slack_error", takeLastSlackError() ?? "unknown");
       return false;
     }
 
@@ -152,6 +153,7 @@ async function sendOneDigest(
     const ts = await postDM(dm, `${header}\n\n${sections.join("\n\n")}${tail}${feedbackFooter()}`);
     if (!ts) {
       span.setAttribute("radar.digest.outcome", "post_failed");
+      span.setAttribute("radar.slack_error", takeLastSlackError() ?? "unknown");
       return false;
     }
 

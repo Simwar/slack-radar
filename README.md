@@ -220,7 +220,7 @@ credential or a fact about your workspace:
 | `BASETEN_MODEL` | Default `zai-org/GLM-4.7`. Options are a snapshot of Baseten Model APIs — verify with `/v1/models` before changing. |
 | `SLACK_WORKSPACE_DOMAIN` | The `acme` in `acme.slack.com`, for thread deep links. |
 | `RADAR_TIMEZONE` | Timezone the realtime-DM working window is evaluated in. |
-| `RADAR_SLACK_BOT_TOKEN` | Per ingestion job — provider vars do not reach those containers. |
+| `RADAR_SLACK_BOT_TOKEN` | The sweep and digest jobs' copy of the bot token — `SLACK_BOT_TOKEN` reaches only the messaging sidecar. |
 | `MODEL_DEFAULT` | Picked from the gateway model menu at deploy. Currently unread: the decision model takes its id in the request body. |
 
 ### Writing `TEAMS_CONFIG`

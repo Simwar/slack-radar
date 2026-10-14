@@ -1,17 +1,9 @@
 import { WebClient } from "@slack/web-api";
 
-// Integration- and provider-scoped vars do not reach ingestion containers, so
-// the sweep and digest jobs carry their own bot token input.
-//
-// The SLACK_BOT_TOKEN fallback matters in practice: `ast project configure` does
-// not prompt for ingestion-scoped inputs, so RADAR_SLACK_BOT_TOKEN is easy to
-// end up without — and the failure is silent in the worst way. The sweep judges
-// correctly, writes the match, then cannot open a DM, so a lead is never told
-// and the match is already marked raised. Falling back to the adapter's token
-// (same xoxb- value) means a half-configured deploy still delivers.
-//
-// The reliable way to set it explicitly is a deploy var, not configure:
-//   ast agent redeploy --id <id> --adapter slack --var RADAR_SLACK_BOT_TOKEN=xoxb-…
+// SLACK_BOT_TOKEN is routed to the messaging sidecar only, so the jobs need
+// their own copy. It is a top-level input: declared per job, the platform
+// delivers it to just one of them. The fallback covers local runs where only
+// the adapter's token is set.
 const token = process.env.RADAR_SLACK_BOT_TOKEN || process.env.SLACK_BOT_TOKEN;
 if (!token) {
   console.error(
