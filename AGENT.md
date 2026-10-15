@@ -142,7 +142,7 @@ worked example.
 | `ANTHROPIC_API_KEY` | top-level input — used by the agent AND the judge |
 | `BASETEN_API_KEY` | top-level input — set it to move the whole agent to Baseten |
 | `BASETEN_BASE_URL` / `BASETEN_MODEL` | top-level inputs — endpoint and model for the Baseten path |
-| `RADAR_SLACK_BOT_TOKEN` | ingestion input — provider vars do not reach ingestion containers |
+| `RADAR-SLACK-BOT-TOKEN` | ingestion input — provider vars do not reach ingestion containers |
 | `SLACK_WORKSPACE_DOMAIN` | top-level input, for building thread deep links |
 
 ## Model backends
