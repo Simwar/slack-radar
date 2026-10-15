@@ -20,7 +20,7 @@ configured schedule-triggered ingestion in local dev.
 **Symptom**
 
 An input declared under `ingestion.<job>.inputs` cannot be set locally. For
-slack-radar that is `RADAR_SLACK_BOT_TOKEN`, and the failure is quiet in the worst
+slack-radar that is `RADAR-SLACK-BOT-TOKEN`, and the failure is quiet in the worst
 way: the job runs, judges correctly, writes its result, then cannot call Slack.
 Nothing is delivered, and because the work is already recorded as done it is
 never retried.
@@ -43,7 +43,7 @@ distinguishable.
 Pass it as a deploy var:
 
 ```bash
-ast agent redeploy --id <id> --adapter slack --var RADAR_SLACK_BOT_TOKEN=xoxb-…
+ast agent redeploy --id <id> --adapter slack --var RADAR-SLACK-BOT-TOKEN=xoxb-…
 ```
 
 And in code, fall back to the adapter's token so a half-configured deploy still

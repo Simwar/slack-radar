@@ -11,11 +11,17 @@ import { WebClient } from "@slack/web-api";
 // (same xoxb- value) means a half-configured deploy still delivers.
 //
 // The reliable way to set it explicitly is a deploy var, not configure:
-//   ast agent redeploy --id <id> --adapter slack --var RADAR_SLACK_BOT_TOKEN=xoxb-…
-const token = process.env.RADAR_SLACK_BOT_TOKEN || process.env.SLACK_BOT_TOKEN;
+//   ast agent redeploy --id <id> --adapter slack --var RADAR-SLACK-BOT-TOKEN=xoxb-…
+//
+// The input is named with hyphens in astropods.yml, so that is the env var
+// name. The underscore form is read too for local runs and older deploys.
+const token =
+  process.env["RADAR-SLACK-BOT-TOKEN"] ||
+  process.env.RADAR_SLACK_BOT_TOKEN ||
+  process.env.SLACK_BOT_TOKEN;
 if (!token) {
   console.error(
-    "[slack-radar] no RADAR_SLACK_BOT_TOKEN or SLACK_BOT_TOKEN — matches will be raised but no DM can be sent.",
+    "[slack-radar] no RADAR-SLACK-BOT-TOKEN, RADAR_SLACK_BOT_TOKEN or SLACK_BOT_TOKEN — matches will be raised but no DM can be sent.",
   );
 }
 const client = new WebClient(token);
