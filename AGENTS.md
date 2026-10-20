@@ -369,9 +369,17 @@ together:
 
 - **Provider-scoped vars do not reach ingestion containers, but top-level
   inputs do.** That split is why the Slack token is a per-ingestion input
-  (`RADAR-SLACK-BOT-TOKEN` — `SLACK_BOT_TOKEN` is claimed by the messaging
+  (`RADAR_SLACK_BOT_TOKEN` — `SLACK_BOT_TOKEN` is claimed by the messaging
   adapter and routed to the sidecar) while the model keys are top-level inputs.
   Anything both containers need should be a top-level input.
+- **Never put a hyphen in an input name.** A secret input named
+  `RADAR-SLACK-BOT-TOKEN` was stored, shown as set, targeted at both jobs in
+  the manifest, and still absent from the job's environment: no build error,
+  no Kubernetes event, just `not_authed` from Slack. The same build with
+  `RADAR_SLACK_BOT_TOKEN` worked (A/B tested on prod-managed-eks, Oct 2026).
+  The opposite rule holds for **job** names: `discussion_sweep` fails the build
+  because job names become Kubernetes object names, which reject underscores.
+  So: hyphens in job names, underscores in input names.
 - **Postgres credentials hit that same split, and it cost a production
   deploy.** `ast docs` is explicit: the platform "injects all five credentials
   into the **agent container** via secrets" (`POSTGRES_HOST`, `PORT`, `USER`,
@@ -501,7 +509,7 @@ Two confirmed CLI bugs (v0.17.1) affect this project directly, and together they
 mean **a schedule-triggered ingestion cannot be run or fully configured in local
 dev**: `ast project trigger` always fails on a flag it does not own, and
 `ast project configure` never prompts for `ingestion.<job>.inputs` (which is why
-`RADAR-SLACK-BOT-TOKEN` has to be a deploy var and has a code-level fallback).
+`RADAR_SLACK_BOT_TOKEN` has to be a deploy var and has a code-level fallback).
 
 Details, source excerpts, suggested fixes and workarounds:
 **[docs/CLI-ISSUES.md](docs/CLI-ISSUES.md)**. Re-check these before assuming a
