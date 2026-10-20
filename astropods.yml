@@ -91,7 +91,7 @@ inputs:
       - moonshotai/Kimi-K3
       - nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B
       - openai/gpt-oss-120b
-    default: "zai-org/GLM-4.7"
+    default: "zai-org/GLM-5.3"
     description: "Model for the Baseten path. Every option supports tool calling, which this agent requires. Flash/Fast tiers are cheaper."
   SLACK_WORKSPACE_DOMAIN:
     name: SLACK_WORKSPACE_DOMAIN
@@ -119,8 +119,9 @@ inputs:
     description: "Timezone for the instant-DM window (weekdays 09:00-18:00 local). Anything outside it waits for the next digest."
 
 # Scheduled jobs do not inherit the agent's Slack token, so it is repeated per
-# job. Postgres credentials do reach them, by secretKeyRef from the knowledge
-# store. On a platform older than astropods/astro#2902 that is true of the cron
+# job. Job names must use hyphens (they become Kubernetes object names); input
+# names must NOT — a secret input with a hyphen never reaches the container.
+# Postgres credentials do reach them, by secretKeyRef from the knowledge store. On a platform older than astropods/astro#2902 that is true of the cron
 # path only, and a job started by `ast agent trigger` dies with 28000.
 ingestion:
   # Score ripe discussions and DM anything urgent.
@@ -132,7 +133,7 @@ ingestion:
     trigger:
       type: schedule
     inputs:
-      - name: RADAR-SLACK-BOT-TOKEN
+      - name: RADAR_SLACK_BOT_TOKEN
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can DM leads and read their reactions. Same value as the agent's."
@@ -161,7 +162,7 @@ ingestion:
     trigger:
       type: schedule
     inputs:
-      - name: RADAR-SLACK-BOT-TOKEN
+      - name: RADAR_SLACK_BOT_TOKEN
         datatype: string
         secret: true
         description: "Slack bot token (xoxb-...), so this job can send digest DMs. Same value as the sweep's."
